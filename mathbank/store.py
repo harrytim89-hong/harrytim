@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import uuid
 import zipfile
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from datetime import datetime, timezone
 
 
@@ -229,7 +229,7 @@ class Store:
                 finally:
                     target.close()
             files = {"mathbank.sqlite3": snapshot}
-            with sqlite3.connect(snapshot) as db:
+            with closing(sqlite3.connect(snapshot)) as db:
                 for (relative,) in db.execute("SELECT path FROM documents"):
                     files[relative] = self.root / relative
             manifest = {name: digest(path.read_bytes()) for name, path in files.items()}
@@ -267,7 +267,7 @@ class Store:
                     path = staging / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(payload)
-            with sqlite3.connect(staging / "mathbank.sqlite3") as db:
+            with closing(sqlite3.connect(staging / "mathbank.sqlite3")) as db:
                 if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA user_version").fetchone()[0] != 1:
                     raise ValueError("DB 무결성/버전 오류입니다.")
                 if db.execute("PRAGMA foreign_key_check").fetchall():
