@@ -18,8 +18,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           architecture: x64
@@ -28,6 +28,11 @@ jobs:
         run: |
           try {
             & ./scripts/build_windows.ps1 *>&1 | Tee-Object -FilePath build.log
+          } catch {
+            $Diagnostic = if (Test-Path build.log) { (Get-Content build.log -Tail 65) -join "`n" } else { $_.ToString() }
+            $Diagnostic = $Diagnostic.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows build diagnostics::$Diagnostic"
+            throw
           } finally {
             if (Test-Path build.log) {
               '## Windows build diagnostic output' | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
