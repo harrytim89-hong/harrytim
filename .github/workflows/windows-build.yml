@@ -9,6 +9,8 @@ on:
       - 'tests/**'
       - 'launch_mathbank.py'
       - 'requirements.lock'
+      - 'docs/USER_GUIDE_KO.md'
+      - 'docs/THIRD_PARTY.md'
       - '.github/workflows/windows-build.yml'
 jobs:
   windows:
