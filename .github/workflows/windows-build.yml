@@ -25,7 +25,17 @@ jobs:
           architecture: x64
       - name: Build and unit tests
         shell: pwsh
-        run: ./scripts/build_windows.ps1
+        run: |
+          try {
+            & ./scripts/build_windows.ps1 *>&1 | Tee-Object -FilePath build.log
+          } finally {
+            if (Test-Path build.log) {
+              '## Windows build diagnostic output' | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+              '```text' | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+              Get-Content build.log -Tail 100 | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+              '```' | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: MathBankDesktop-Windows-x64
