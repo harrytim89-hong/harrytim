@@ -1,0 +1,5 @@
+[
+  {"prompt": "파이썬에서 리스트를 만드는 기호는?", "choices": ["[]", "{}", "()"], "answer": 1, "explanation": "리스트는 대괄호 []로 만듭니다."},
+  {"prompt": "2 ** 3의 결과는?", "choices": ["6", "8", "9"], "answer": 2, "explanation": "**는 거듭제곱 연산자입니다."},
+  {"prompt": "문자열의 길이를 구하는 함수는?", "choices": ["sum()", "len()", "int()"], "answer": 2, "explanation": "len()은 문자열 등의 길이를 반환합니다."}
+]
