@@ -14,6 +14,16 @@ if ($LASTEXITCODE -ne 0) { throw 'Tests failed; no package was built.' }
 if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed.' }
 & $BuildPython scripts/collect_licenses.py dist/MathBankDesktop/licenses
 if ($LASTEXITCODE -ne 0) { throw 'License collection failed.' }
+$SmokeOutput = Join-Path $PWD 'artifacts\windows-exe-smoke'
+$SmokeProcess = Start-Process -FilePath (Join-Path $PWD 'dist\MathBankDesktop\MathBankDesktop.exe') -ArgumentList @('--smoke-test', ('"' + $SmokeOutput + '"')) -PassThru
+if (-not $SmokeProcess.WaitForExit(90000)) {
+    Stop-Process -Id $SmokeProcess.Id -Force
+    throw 'Packaged executable smoke test timed out.'
+}
+if ($SmokeProcess.ExitCode -ne 0) { throw 'Packaged executable smoke test failed.' }
+$SmokeResult = Get-Content (Join-Path $SmokeOutput 'result.json') -Raw -Encoding utf8 | ConvertFrom-Json
+if (-not $SmokeResult.pdf_saved -or -not $SmokeResult.render_ready) { throw 'Packaged rendering/PDF validation failed.' }
+Write-Output ('Packaged EXE smoke result: ' + ($SmokeResult | ConvertTo-Json -Compress))
 Copy-Item docs\USER_GUIDE_KO.md dist\MathBankDesktop\USER_GUIDE_KO.md
 Copy-Item docs\THIRD_PARTY.md dist\MathBankDesktop\THIRD_PARTY.md
 Copy-Item requirements.lock dist\MathBankDesktop\requirements.lock
