@@ -1,5 +1,6 @@
 # Build on Windows x64, Python 3.12. End users do not need Python or Node.
 $ErrorActionPreference = 'Stop'
+$env:PYTHONUTF8 = '1'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'A real Windows build host is required.' }
 Set-Location (Split-Path -Parent $PSScriptRoot)
 python -m venv .build-venv
