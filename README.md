@@ -1,3 +1,21 @@
+# MathBank Desktop
+
+수학 문제은행 데스크톱 앱 개발판입니다. **아직 Windows EXE 완성품은 아닙니다.**
+
+- [사용 안내](docs/USER_GUIDE_KO.md)
+- [요구별 구현·검증·미완료 상태](docs/IMPLEMENTATION_STATUS.md)
+- [Windows 수용 검사](docs/WINDOWS_ACCEPTANCE.md)
+- [의존성 라이선스](docs/THIRD_PARTY.md)
+- [개발 인계](HANDOFF.md)
+
+Python 3.12 개발 환경에서 `pip install -r requirements.lock` 후 `python -m mathbank`로 실행합니다.
+테스트는 `python -m pytest -q`입니다. Windows 빌드용 구성은 `scripts/build_windows.ps1`입니다.
+운영 데이터는 `%LOCALAPPDATA%\MathBankDesktop` 또는 `MATHBANK_DATA`에 저장합니다.
+
+기존 CLI는 아래 명령으로 계속 사용할 수 있습니다.
+
+---
+
 # 문제 출제 프로그램
 
 Python 3.10 이상에서 실행하는 한국어 객관식 퀴즈 CLI입니다.
