@@ -1,6 +1,6 @@
 # MathBank Desktop 구현·검증 상태
 
-기준: 2026-10-30 (한국 시간). **개발 중인 0.1.0이며 요구서 전체의 완성품이 아니다. Windows EXE는 아직 생성하지 못했다.**
+기준: 2026-10-30 (한국 시간). **개발 중인 0.1.0이며 요구서 전체의 완성품이 아니다. Windows EXE 빌드와 자동 실행 검사는 통과했다.**
 
 ## 조사 결과와 선택
 
@@ -15,7 +15,7 @@ PySide6 6.8.3 + Qt WebEngine를 선택했다. 네이티브 창 생성, 오프라
 
 | 요구 영역 | 구현 | 검증 / 남은 일 |
 |---|---|---|
-| 독립 데스크톱 창 | Qt Widgets 6개 주요 화면 | Linux offscreen 실제 생성·화면 캡처. Windows 더블클릭 미검증 |
+| 독립 데스크톱 창 | Qt Widgets 6개 주요 화면 | Linux offscreen 실제 생성·화면 캡처. Windows 러너의 패키징된 EXE 창 생성·PDF 검사 통과. 사용자 PC 더블클릭 별도 검사 필요 |
 | PDF 등록·중복 | 원본 SHA-256, 페이지 수, 과정, 암호 PDF 거부 | 생성 PDF로 검사. 실제 손상·대용량 교재 세트 필요 |
 | 자동 분리 | 페이지별 AI 영역 JSON, 빈/정답/불명확 구분, 페이지별 큐 | 모의 AI 검사 통과. 실제 AI 호출 접근 거부로 미검증 |
 | 영역 편집 | 마우스 드래그로 문항 영역 추가 | 기본 UI 구현. 기존 경계 이동·다페이지 연결·합치기·나누기·읽기순서 편집 미완료 |
@@ -38,7 +38,7 @@ PySide6 6.8.3 + Qt WebEngine를 선택했다. 네이티브 창 생성, 오프라
 | 오프라인 연결 | 원본 크롭·요청 ZIP, 응답 크기·스키마·ID/해시/버전 검사 | 가져오기로 자동 통과하지 않음. 오프라인 독립 검사 응답 가져오기 미완료 |
 | 캐시·API 확장 | 공급자 클래스 분리 | 콘텐츠 캐시·적응 배칭·선택적 다중 API·자격증명 저장소 미완료 |
 | 백업·복원 | SQLite backup API, 원본 목록·해시 ZIP, 새 폴더 검증 복원 | 한글 경로·참조·해시·경로 순회 방어 검사. 자동 정기 백업·앱 내 데이터 폴더 전환·업데이트 롤백 미완료 |
-| Windows 배포 | PowerShell 빌드, PyInstaller onedir, Inno Setup, 수동 CI 파일 | **실행하지 않음. EXE·설치 파일 없음.** 외부 업로드·Actions 실행·환경 게시 없음 |
+| Windows 배포 | PowerShell 빌드, PyInstaller onedir, Inno Setup, 수동 CI 파일 | 사용자 승인 후 main 업로드·Actions 빌드 성공. EXE 포함 배포 폴더 생성 및 자동 실행 검사 통과. Inno 설치 파일·사용자 PC 설치·환경 게시 미실행 |
 
 ## 확인된 검사
 
@@ -54,7 +54,20 @@ PySide6 6.8.3 + Qt WebEngine를 선택했다. 네이티브 창 생성, 오프라
 
 ## 우선 후속 작업
 
-1. 현재 개발 코드를 Windows에서 빌드하고 네이티브 창/Qt WebEngine/프린터/프로세스 종료를 검증한다.
+1. 생성된 Windows 배포물을 사용자 Windows 10/11 PC에서 실행하고 실제 프린터·설치·프로세스 종료를 검증한다.
 2. 사용자 PC의 공식 Codex 구독 연결로 실제 이미지 시험을 성공시킨 뒤, 대표 교재 PDF를 검사한다.
 3. 분리·도형·분류·장문 조판의 위 미완료 항목을 구현하고 실제 자료 기반 실패 사례를 늘린다.
 4. 기존 운영 자료가 제공되면 읽기 전용 인벤토리·해시·관계 검사를 한 뒤 별도 사본에서 명시적 마이그레이션을 설계한다.
+
+## Windows CI 추가 검증 (2026-10-30 한국 시간)
+
+- 승인 후 GitHub main에 소스를 업로드하고 Windows Actions를 실행했다.
+- 첫 Windows 검사에서 임시 백업 DB의 열린 SQLite 핸들로 WinError 32가 발생했다.
+  backup/restore의 조회 연결을 `contextlib.closing`으로 명시적으로 닫아 수정했다.
+- 커밋 `9f149e9`의 [빌드 #4](https://github.com/harrytim89-hong/harrytim/actions/runs/40907321138)는 성공했다.
+- Windows 러너에서 테스트 31개, PyInstaller onedir 빌드, 배포 EXE `--smoke-test`를 통과했다.
+  EXE가 네이티브 창을 만들고 수식·글꼴 준비 후 PDF 저장 성공 콜백과 파일 존재·크기를 확인했다.
+- 빌드 성공은 실제 수학 PDF의 AI 정확도, 사용자 Windows 10/11 설치, 물리 프린터,
+  Word·한컴오피스 호환성 검증을 의미하지 않는다. AI 접근 거부 문제는 그대로 남아 있다.
+- Actions 산출물 `MathBankDesktop-Windows-x64`에는 Python/Qt 런타임이 포함된다.
+  EXE만 분리하지 말고 `_internal` 등 함께 제공된 전체 폴더를 유지해야 한다.

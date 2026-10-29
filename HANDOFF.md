@@ -27,10 +27,11 @@ Linux Qt WebEngine 자식 프로세스 실행 권한이 필요. 샌드박스 비
 
 ## 배포
 
-Windows 빌드 스크립트와 수동 workflow_dispatch CI를 작성했으나 실행하지 않았다.
-Windows EXE/설치 파일 없음. 소스 외부 업로드·커밋·push·환경 게시를 하지 않았다.
+Windows 빌드 스크립트와 push/workflow_dispatch CI를 실행했다.
+사용자 승인 후 소스 커밋·main push 완료. 9f149e9 빌드 #4에서 EXE 생성과 자동 실행 검사 통과.
+Inno 설치 파일 및 환경 게시 없음. 배포 폴더 다운로드는 Actions Artifacts를 사용한다.
 사용자는 Windows PC에서 검증 가능하다고 답했다. 원격 Windows 실행 도구는 연결되어 있지 않다.
-CI를 사용하려면 소스 업로드에 대한 사용자 명시적 승인이 필요하다(요구서의 제한).
+사용자는 소스 업로드·Windows 빌드 실행을 명시적으로 승인했다. 동일 작업의 승인 재요청은 불필요하다.
 원본 운영 데이터나 Codex 인증 파일을 CI/배포에 넣지 않는다.
 
 ## 우선 수정/확장
@@ -41,3 +42,12 @@ DOCX 벡터, 기존 데이터 마이그레이션, 자동 백업/업데이트 롤
 수동 편집은 관련 상태만 무효화하지만 파이프라인은 아직 보수적으로 전체 원본 판독을 반복한다.
 Qt offscreen에서 GPU 경고는 있으나 PDF 저장은 성공했다. WebEngine profile/page 객체 수명을 수정하고 재실행하여 종료 경고가 사라진 것을 확인했다.
 추후 실제 자료를 얻어 모의 AI 테스트와 실제 정확도 검증을 엄격히 구분할 것.
+
+## Windows 검증 후 수정
+
+SQLite connection context manager는 close를 하지 않으므로 backup/restore의 임시 DB 조회에
+`contextlib.closing`을 사용했다. Windows WinError 32를 해결했고 Windows 31개 테스트가 통과했다.
+`mathbank/smoke.py` + `launch_mathbank.py --smoke-test PATH`는 배포 EXE의 창·수식·PDF 검사 진입점이다.
+CI 성공 시에만 배포 폴더를 업로드한다. 일반 실행에는 smoke 옵션을 사용하지 않는다.
+GitHub API는 이 클라우드에서 Forbidden이지만 git push와 공개 Actions HTML 조회는 가능했다.
+워크플로우의 진단 주석으로 실패 로그를 확인할 수 있다. 임의 인증 추출은 하지 않는다.

@@ -1,6 +1,11 @@
 # MathBank Desktop 0.1.0 사용 안내
 
-현재 개발판입니다. Windows 설치 파일은 아직 생성·검증되지 않았습니다.
+현재 개발판입니다. Windows EXE 포함 배포 폴더가 GitHub Actions에서 생성되고 자동 실행 검사를 통과했습니다.
+[Windows 빌드 목록](https://github.com/harrytim89-hong/harrytim/actions/workflows/windows-build.yml)에서
+가장 최근 성공 실행의 Artifacts → `MathBankDesktop-Windows-x64`를 내려받으세요.
+GitHub 로그인이 필요합니다. 최신 배포 ZIP을 전체 압축 해제한 뒤 `MathBankDesktop.exe`를 실행합니다.
+`_internal` 폴더를 삭제하거나 EXE만 따로 옮기지 마세요. 일반 사용자 PC에는 Python·Node 설치가 필요하지 않습니다.
+설치 마법사(Inno Setup)와 실제 Windows 10/11 사용자 PC 검사는 아직 미완료입니다.
 
 ## 기본 흐름
 
@@ -56,7 +61,7 @@ Windows x64 + Python 3.12 빌드 환경에서 `scripts/build_windows.ps1`을 실
 성공 시 `dist/MathBankDesktop/MathBankDesktop.exe`와 배포 ZIP이 생성됩니다.
 전체 폴더가 필요하며 EXE 한 파일만 옮기면 안 됩니다.
 설치 파일은 Inno Setup 6에서 `scripts/installer.iss`를 컴파일합니다.
-이 절차는 아직 실제 Windows에서 검증되지 않았습니다.
+PyInstaller 빌드와 EXE 실행 검사는 Windows CI에서 통과했습니다. Inno Setup 컴파일·설치는 아직 미검증입니다.
 
 Codex CLI는 앱에 인증 정보를 넣어 배포하지 않습니다. 공식 배포 및 ChatGPT 로그인은
 https://developers.openai.com/codex/cli 와 https://github.com/openai/codex 를 따릅니다.

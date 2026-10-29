@@ -1,6 +1,8 @@
 # MathBank Desktop
 
-수학 문제은행 데스크톱 앱 개발판입니다. **아직 Windows EXE 완성품은 아닙니다.**
+수학 문제은행 데스크톱 앱 개발판입니다. **Windows EXE 빌드·자동 실행 검사를 통과한 개발판이며, 요구서 전체의 완성품은 아닙니다.**
+
+[Windows 다운로드](https://github.com/harrytim89-hong/harrytim/actions/workflows/windows-build.yml): 최신 성공 실행의 Artifacts에서 `MathBankDesktop-Windows-x64`를 받으세요.
 
 - [사용 안내](docs/USER_GUIDE_KO.md)
 - [요구별 구현·검증·미완료 상태](docs/IMPLEMENTATION_STATUS.md)
