@@ -182,8 +182,13 @@ class MainWindow(QMainWindow):
     def __init__(self, store=None):
         super().__init__()
         self.store = store or Store()
-        self.provider = CodexProvider()
-        self.pipeline = Pipeline(self.store, self.provider)
+        settings = self.store.records("ai_settings")
+        settings = settings[0] if settings else {}
+        self.provider = CodexProvider(model=settings.get("model", ""), effort=settings.get("effort", ""), store=self.store)
+        observed = self.store.records("ai_observed")
+        if observed:
+            self.provider.observed_model = observed[0].get("model", "")
+        self.pipeline = Pipeline(self.store, self.provider, workers=settings.get("workers", 2))
         self.thread = None
         self.signals = WorkerSignals()
         self.signals.done.connect(self.refresh)
@@ -199,7 +204,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.nav)
         right = QVBoxLayout()
         outer.addLayout(right)
-        brand = QLabel("MATHBANK  /  DESKTOP")
+        brand = QLabel("MATHBANK  /  DESKTOP  0.2.0")
         brand.setStyleSheet("font-size:24px;font-weight:700;color:#087e82;padding:16px")
         right.addWidget(brand)
         self.tabs = QTabWidget()
@@ -278,7 +283,7 @@ class MainWindow(QMainWindow):
 
     def build_library(self):
         layout = self.section("PDF 자료실", "PDF를 등록한 뒤 자동 처리 시작을 누르세요. 완료 문항은 승인 없이 보관함에 저장됩니다.")
-        self.row(layout, [("PDF 등록", self.add_pdf), ("자동 처리 시작", self.process_pdf), ("영역 직접 추가", self.add_region)])
+        self.row(layout, [("PDF 등록", self.add_pdf), ("자동 처리 시작", self.process_pdf), ("영역 직접 추가", self.add_region), ("자료 삭제", lambda: self.trash_selected("document", self.documents_table, self.documents))])
         self.documents_table = self.table(layout, ["자료명", "과정", "페이지", "등록일"])
 
     def add_pdf(self):
@@ -344,7 +349,7 @@ class MainWindow(QMainWindow):
 
     def build_bank(self):
         layout = self.section("문제 보관함", "한 페이지에 50문항을 표시합니다. 원문 검사와 정답·풀이 검사는 별도로 관리됩니다.")
-        row = self.row(layout, [("검색", self.search_bank), ("원본 · 편집", self.edit_question), ("재처리", self.retry_question), ("이전", self.previous_page), ("다음", self.next_page)])
+        row = self.row(layout, [("검색", self.search_bank), ("원본 · 편집", self.edit_question), ("재처리", self.retry_question), ("이전", self.previous_page), ("다음", self.next_page), ("문항 삭제", lambda: self.trash_selected("question", self.bank_table, self.questions))])
         self.search = QLineEdit()
         self.search.setPlaceholderText("본문 · 단원 · 문항번호 검색")
         self.search.returnPressed.connect(self.search_bank)
@@ -434,7 +439,7 @@ class MainWindow(QMainWindow):
     def build_exams(self):
         layout = self.section("시험지 · 과제 제작", "선택 문항의 내용·정답·분류를 스냅샷으로 저장합니다. 원문 검사 예외는 초안에 명시합니다.")
         self.row(layout, [("보관함 선택 문항으로 만들기", self.create_exam), ("문제지", lambda: self.preview_exam("questions")),
-                          ("빠른답", lambda: self.preview_exam("answers")), ("상세 해설", lambda: self.preview_exam("solutions")), ("DOCX 저장", self.save_docx)])
+                          ("빠른답", lambda: self.preview_exam("answers")), ("상세 해설", lambda: self.preview_exam("solutions")), ("DOCX 저장", self.save_docx), ("시험지 삭제", lambda: self.trash_selected("exam", self.exam_table, self.exams))])
         self.exam_table = self.table(layout, ["제목", "문항 수", "출력 상태"])
 
     def create_exam(self):
@@ -483,6 +488,7 @@ class MainWindow(QMainWindow):
     def build_students(self):
         layout = self.section("학생 · 채점 · 성적표", "미채점과 오답을 구분합니다. 성적표는 저장 당시 시험지와 채점 결과를 보존합니다.")
         self.row(layout, [("학생 등록", self.add_student), ("선택 시험 배정", self.assign_exam), ("채점 · 성적표 작성", self.grade), ("저장 성적표 보기", self.show_report), ("오답 보완 문항 찾기", self.clinic)])
+        self.row(layout, [("학생 삭제", lambda: self.trash_selected("student", self.student_table, self.students)), ("배정 취소 · 삭제", lambda: self.trash_selected("assignment", self.assignment_table, self.assignments))])
         self.student_table = self.table(layout, ["학생", "반", "학교급", "학년"])
         self.assignment_table = self.table(layout, ["학생", "시험지", "제출일", "상태"])
 
@@ -590,7 +596,7 @@ class MainWindow(QMainWindow):
 
     def build_jobs(self):
         layout = self.section("작업 큐 센터", "페이지·문항 단위 저장 · 최대 3가지 방법으로 재처리 · 인증/한도 오류 시 일시정지")
-        self.row(layout, [("대기 · 중단 작업 재개", self.resume_jobs), ("진행 작업 취소", self.pipeline.cancel.set), ("선택 예외 재시도", self.retry_job)])
+        self.row(layout, [("대기 · 중단 작업 재개", self.resume_jobs), ("진행 작업 취소", self.pipeline.cancel.set), ("대기 작업 전체 취소", self.cancel_waiting), ("선택 예외 재시도", self.retry_job)])
         self.jobs_table = self.table(layout, ["작업", "대상", "상태", "시도", "방법", "사유"])
 
     def resume_jobs(self):
@@ -610,6 +616,22 @@ class MainWindow(QMainWindow):
         self.ai_enabled = QCheckBox("Codex 구독 연결 사용 (현재 세션)")
         self.ai_enabled.toggled.connect(lambda enabled: setattr(self.provider, 'enabled', enabled))
         layout.addWidget(self.ai_enabled)
+        form = QFormLayout()
+        self.model_field = QLineEdit(self.provider.model)
+        self.model_field.setPlaceholderText("비워두면 현재 CLI 기본 모델 유지 (권장)")
+        form.addRow("지정 모델", self.model_field)
+        self.effort_field = QComboBox()
+        self.effort_field.addItems(["기본값 유지", "medium", "high", "xhigh"])
+        self.effort_field.setCurrentText(self.provider.effort or "기본값 유지")
+        form.addRow("추론 강도", self.effort_field)
+        self.worker_field = QSpinBox()
+        self.worker_field.setRange(1, 2)
+        self.worker_field.setValue(self.pipeline.workers)
+        form.addRow("동시 작업 수 (한도 오류 시 1)", self.worker_field)
+        layout.addLayout(form)
+        self.row(layout, [("AI 설정 저장", self.save_ai_settings), ("최근 확인 모델 고정", self.pin_model), ("휴지통 · 복원", self.open_trash)])
+        self.model_status = QLabel()
+        layout.addWidget(self.model_status)
         self.ai_status = QLabel("연결 진단 전")
         self.ai_status.setWordWrap(True)
         layout.addWidget(self.ai_status)
@@ -622,6 +644,76 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         layout.addWidget(note)
         layout.addStretch()
+
+    def idle_required(self):
+        if self.thread and self.thread.is_alive():
+            raise ValueError("진행 중인 작업을 취소하고 종료될 때까지 기다린 뒤 실행하세요.")
+
+    def save_ai_settings(self):
+        self.idle_required()
+        import re
+        model = self.model_field.text().strip()
+        if model and not re.fullmatch(r'[a-zA-Z0-9._:/-]{1,100}', model):
+            raise ValueError("모델 ID 형식을 확인하세요.")
+        self.provider.model = model
+        self.provider.effort = "" if self.effort_field.currentIndex() == 0 else self.effort_field.currentText()
+        self.pipeline.workers = self.worker_field.value()
+        self.store.put_record("ai_settings", {"model": model, "effort": self.provider.effort,
+                              "workers": self.pipeline.workers}, "ai-settings")
+        self.refresh_jobs()
+        self.statusBar().showMessage("AI 설정 저장 완료. 다음 요청부터 적용합니다. 모델 자동 대체는 하지 않습니다.")
+
+    def pin_model(self):
+        if not self.provider.observed_model:
+            raise ValueError("실제 AI 요청에서 모델이 확인된 뒤 사용할 수 있습니다.")
+        self.model_field.setText(self.provider.observed_model)
+        self.save_ai_settings()
+
+    def cancel_waiting(self):
+        self.store.cancel_jobs()
+        self.refresh_jobs()
+
+    def trash_selected(self, kind, table, data):
+        self.idle_required()
+        rows = sorted({i.row() for i in table.selectionModel().selectedRows()})
+        if not rows:
+            raise ValueError("삭제할 항목을 선택하세요.")
+        extra = "자료에 속한 문항도 보관함에서 숨기고 관련 작업을 취소합니다. " if kind == "document" else ""
+        message = f"선택한 {len(rows)}개 항목을 휴지통으로 이동할까요? " + extra + "기존 시험지·배정·성적표의 저장 사본은 유지됩니다. 설정의 휴지통에서 복원할 수 있습니다."
+        if QMessageBox.question(self, "휴지통으로 이동", message) != QMessageBox.Yes:
+            return
+        self.store.move_to_trash(kind, [data[row]["id"] for row in rows])
+        self.refresh()
+
+    def open_trash(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("휴지통 · 원본 파일은 보존됩니다")
+        dialog.resize(700, 450)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("복원은 목록을 되살립니다. 취소된 작업은 자동으로 다시 시작하지 않습니다."))
+        entries = self.store.trashed()
+        labels = {'document':'PDF 자료', 'question':'문항', 'exam':'시험지', 'student':'학생', 'assignment':'배정'}
+        table = self.table(layout, ["종류", "이름 / 식별자", "삭제일"])
+        display = []
+        for entry in entries:
+            kind, identifier = entry['kind'], entry['target']
+            if kind == 'document': name = self.store.document(identifier)['name']
+            elif kind == 'question':
+                q = self.store.question(identifier)
+                name = q['number'] or q['content'].get('text', identifier)[:50]
+            else:
+                record = self.store.record(identifier)
+                name = record.get('name') or record.get('title') or record.get('student', {}).get('name', identifier)
+            display.append((labels[kind], name, entry['created'][:19]))
+        self.fill(table, display)
+        def restore():
+            self.idle_required()
+            entry = self.selected(table, entries)
+            self.store.restore_trash(entry['kind'], entry['target'])
+            dialog.accept()
+            self.refresh()
+        self.row(layout, [("선택 항목 복원", restore)])
+        dialog.exec()
 
     def check_ai(self):
         ok, message = self.provider.status()
@@ -671,6 +763,9 @@ class MainWindow(QMainWindow):
             q["content"].get("level", "—"), q["stages"]["comparison"]["state"], q["stages"]["answer"]["state"], q["stages"]["solution"]["state"]) for q in self.questions])
 
     def refresh_jobs(self):
+        if hasattr(self, "model_status"):
+            actual = self.provider.observed_model or "아직 확인되지 않음"
+            self.model_status.setText(f"최근 CLI 실행 모델: {actual} · 지정: {self.provider.model or 'CLI 기본값'} · 동시 {self.pipeline.workers}개")
         self.job_rows = self.store.jobs()
         self.fill(self.jobs_table, [(j["kind"], j["target"][:12], j["status"], j["attempt"], j["method"], j["error"]) for j in self.job_rows])
 

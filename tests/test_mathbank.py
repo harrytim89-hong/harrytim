@@ -286,3 +286,103 @@ def test_answer_edit_keeps_source_checks(bank):
     assert stages['comparison'] == dict(state='passed', version=2, reason='')
     assert stages['answer']['state'] == 'pending'
     assert stages['solution']['state'] == 'pending'
+
+
+def test_trash_document_preserves_snapshot_and_restore(bank):
+    store, doc, qid = bank
+    passed(store, qid)
+    exam_id = make_exam(store, [qid], '보존 시험')
+    snapshot = store.record(exam_id)
+    store.enqueue('question', qid, 1)
+    store.move_to_trash('document', [doc])
+    assert store.documents() == []
+    assert store.questions()[1] == 0
+    assert store.record(exam_id) == snapshot
+    assert store.jobs()[0]['status'] == 'cancelled'
+    store.restore_trash('document', doc)
+    assert store.questions()[1] == 1
+    assert (store.root / store.document(doc)['path']).exists()
+
+
+def test_trash_records_keeps_assignments_and_reports(bank):
+    store, _, _ = bank
+    student = store.put_record('student', {'name':'학생'})
+    assignment = store.put_record('assignment', {'student':store.record(student)})
+    store.move_to_trash('student', [student])
+    assert store.records('student') == []
+    assert store.record(assignment)['student']['name'] == '학생'
+    store.restore_trash('student', student)
+    assert len(store.records('student')) == 1
+
+
+def test_atomic_claim_and_question_priority(bank):
+    from concurrent.futures import ThreadPoolExecutor
+    store, doc, qid = bank
+    store.enqueue('page', f'{doc}:0')
+    question_job = store.enqueue('question', qid, 1)
+    assert store.claim_job()['id'] == question_job
+    for i in range(20): store.enqueue('page', f'{doc}:{i+1}')
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claimed = list(pool.map(lambda _: store.claim_job()['id'], range(21)))
+    assert len(set(claimed)) == 21
+    assert store.claim_job() is None
+
+
+def test_trash_question_does_not_receive_late_ai_result(bank):
+    store, _, qid = bank
+    q = store.question(qid)
+    store.move_to_trash('question', [qid])
+    assert Pipeline(store, ScriptedProvider([])).save_result(q, content(), initial_stages(), '') is False
+    assert store.question(qid)['content'] == {}
+
+
+def test_cancel_pending_preserves_completed(bank):
+    store, doc, qid = bank
+    done = store.enqueue('question', qid, 1)
+    store.job_status(done, 'done')
+    waiting = store.enqueue('page', f'{doc}:0')
+    store.cancel_jobs()
+    assert {j['id']:j['status'] for j in store.jobs()} == {done:'done', waiting:'cancelled'}
+
+
+def test_completed_pages_are_not_resubmitted(bank):
+    store, doc, _ = bank
+    job = store.enqueue('page', f'{doc}:0')
+    store.job_status(job, 'done')
+    Pipeline(store, ScriptedProvider([])).enqueue_document(doc)
+    assert len(store.jobs()) == 1
+
+
+def test_independent_reading_does_not_need_solution():
+    from mathbank.validation import validate_reading
+    from mathbank.pipeline import READ_PROMPT
+    validate_reading({'text':'$x+1$', 'choices':[], 'uncertain':False})
+    assert 'Do not solve, classify, explain' in READ_PROMPT
+    with pytest.raises(ValueError):
+        validate_reading({'text':'$x+1', 'choices':[], 'uncertain':False})
+
+
+def test_observed_model_records_only_model_identifier(bank):
+    from mathbank.provider import CodexProvider
+    store, _, _ = bank
+    provider = CodexProvider(store=store)
+    provider.observe_model('model: example-model\nsecret: DO_NOT_STORE\n')
+    assert provider.observed_model == 'example-model'
+    assert store.record('ai-observed-model') == {'id':'ai-observed-model', 'model':'example-model'}
+
+
+def test_two_workers_complete_distinct_questions(bank):
+    import threading
+    store, doc, qid = bank
+    q2 = store.add_question(doc,[{'page':0,'box':[40,180,400,280]}])
+    class Provider:
+        def __init__(self): self.lock=threading.Lock(); self.calls=0
+        def call(self,prompt,images,cancel):
+            with self.lock: self.calls+=1
+            return copy.deepcopy(REVIEW if 'source_ok' in prompt else content())
+    provider=Provider()
+    store.enqueue('question',qid,1)
+    store.enqueue('question',q2,1)
+    Pipeline(store,provider,workers=2).run()
+    assert provider.calls == 6
+    assert printable(store.question(qid)) and printable(store.question(q2))

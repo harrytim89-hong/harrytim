@@ -57,6 +57,8 @@ class Store:
                 CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status);
                 CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, kind TEXT, body TEXT, updated TEXT);
                 CREATE INDEX IF NOT EXISTS records_kind ON records(kind);
+                CREATE TABLE IF NOT EXISTS trash(kind TEXT, target TEXT, created TEXT,
+                    PRIMARY KEY(kind,target));
                 PRAGMA user_version=1;
             ''')
 
@@ -74,7 +76,7 @@ class Store:
 
     def documents(self):
         with self.connect() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM documents ORDER BY created DESC")]
+            return [dict(r) for r in db.execute("SELECT * FROM documents WHERE id NOT IN (SELECT target FROM trash WHERE kind='document') ORDER BY created DESC")]
 
     def document(self, identifier):
         with self.connect() as db:
@@ -91,6 +93,7 @@ class Store:
         with self.connect() as db:
             old = db.execute("SELECT id FROM documents WHERE hash=?", (sha,)).fetchone()
         if old:
+            self.restore_trash("document", old[0])
             return old[0], False
         with pymupdf.open(stream=payload, filetype="pdf") as pdf:
             if pdf.needs_pass:
@@ -137,7 +140,8 @@ class Store:
             return self.decode(row)
 
     def questions(self, page=0, search="", document_id=None, exceptions=False):
-        where, args = ["1=1"], []
+        where, args = ["id NOT IN (SELECT target FROM trash WHERE kind='question')",
+                       "document_id NOT IN (SELECT target FROM trash WHERE kind='document')"], []
         if search:
             where.append("(content LIKE ? OR number LIKE ?)")
             args += [f"%{search}%", f"%{search}%"]
@@ -186,8 +190,61 @@ class Store:
 
     def next_job(self):
         with self.connect() as db:
-            row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY rowid LIMIT 1").fetchone()
+            row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE kind WHEN 'question' THEN 0 ELSE 1 END, rowid LIMIT 1").fetchone()
             return dict(row) if row else None
+
+    def claim_job(self):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY "
+                             "CASE kind WHEN 'question' THEN 0 ELSE 1 END,rowid LIMIT 1").fetchone()
+            if row:
+                db.execute("UPDATE jobs SET status='running',updated=? WHERE id=?", (now(), row['id']))
+                return dict(row)
+        return None
+
+    def move_to_trash(self, kind, identifiers):
+        if kind not in ('document', 'question', 'exam', 'student', 'assignment'):
+            raise ValueError("지원하지 않는 삭제 대상")
+        with self.connect() as db:
+            for identifier in identifiers:
+                db.execute("INSERT OR IGNORE INTO trash VALUES(?,?,?)", (kind, identifier, now()))
+                if kind == 'document':
+                    db.execute("UPDATE jobs SET status='cancelled',error='자료 삭제' WHERE status IN ('queued','paused','running') "
+                               "AND ((kind='page' AND target LIKE ?) OR (kind='question' AND target IN "
+                               "(SELECT id FROM questions WHERE document_id=?)))", (identifier + ':%', identifier))
+                elif kind == 'question':
+                    db.execute("UPDATE jobs SET status='cancelled',error='문항 삭제' WHERE kind='question' AND target=? "
+                               "AND status IN ('queued','paused','running')", (identifier,))
+
+    def trashed(self):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute("SELECT * FROM trash ORDER BY created DESC")]
+
+    def restore_trash(self, kind, identifier):
+        with self.connect() as db:
+            db.execute("DELETE FROM trash WHERE kind=? AND target=?", (kind, identifier))
+
+    def is_trashed(self, question):
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM trash WHERE (kind='question' AND target=?) "
+                              "OR (kind='document' AND target=?)", (question['id'],question['document_id'])).fetchone() is not None
+
+    def document_trashed(self, identifier):
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM trash WHERE kind='document' AND target=?", (identifier,)).fetchone() is not None
+
+    def completed_page(self, target):
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM jobs WHERE kind='page' AND target=? AND status IN ('done','skipped')", (target,)).fetchone() is not None
+
+    def cancel_jobs(self, identifiers=None):
+        with self.connect() as db:
+            if identifiers is None:
+                db.execute("UPDATE jobs SET status='cancelled',error='사용자 취소' WHERE status IN ('queued','paused')")
+            else:
+                db.executemany("UPDATE jobs SET status='cancelled',error='사용자 취소' WHERE id=? "
+                               "AND status IN ('queued','paused')", [(i,) for i in identifiers])
 
     def jobs(self):
         with self.connect() as db:
@@ -209,7 +266,7 @@ class Store:
     def records(self, kind):
         with self.connect() as db:
             return [dict(id=r["id"], **json.loads(r["body"])) for r in
-                    db.execute("SELECT * FROM records WHERE kind=? ORDER BY rowid DESC", (kind,))]
+                    db.execute("SELECT * FROM records WHERE kind=? AND id NOT IN (SELECT target FROM trash WHERE kind=?) ORDER BY rowid DESC", (kind, kind))]
 
     def record(self, identifier):
         with self.connect() as db:

@@ -105,3 +105,17 @@ def invalidate_changes(old, new, stages, version):
         else:
             result[key]['version'] = version
     return result
+
+
+def validate_reading(result):
+    if not isinstance(result, dict) or not isinstance(result.get('text'), str) or not result['text'].strip():
+        raise ValueError('독립 판독 본문 오류')
+    if not isinstance(result.get('choices'), list) or any(not isinstance(v,str) for v in result['choices']):
+        raise ValueError('독립 판독 보기 오류')
+    if type(result.get('uncertain')) is not bool:
+        raise ValueError('독립 판독 불확실성 필드 오류')
+    if len(json.dumps(result)) > 200000:
+        raise ValueError('독립 판독 크기 제한 초과')
+    for text in [result['text'], *result['choices']]:
+        if len(re.findall(r'(?<!\\)\$', text)) % 2:
+            raise ValueError('독립 판독 수식 구분자 오류')

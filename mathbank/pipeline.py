@@ -4,9 +4,17 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import pymupdf
 from .provider import ProviderError, Cancelled
-from .validation import initial_stages, mark, validate_content, compare_readings
+from .validation import initial_stages, mark, validate_content, compare_readings, validate_reading
+
+READ_PROMPT = r'''Perform a fresh independent reading of ONLY the source IMAGE.
+Return {"text":string,"choices":[string],"uncertain":boolean}.
+Preserve numbers, signs, exponents, conditions and choice order EXACTLY, using $LaTeX$ for math.
+Exclude question numbering. Do not solve, classify, explain or reference any prior transcription.
+Mark uncertain=true if any source content is unreadable. Diagram relations are checked separately.
+'''
 
 CONTENT_PROMPT = r'''Read the source exactly, preserving every number, sign, condition and choice order.
 Do not invent illegible content. Return {"text": string, "choices": [string],
@@ -40,43 +48,54 @@ def crop(store, question, output, dpi=180):
 
 
 class Pipeline:
-    def __init__(self, store, provider):
+    def __init__(self, store, provider, workers=1):
         self.store, self.provider = store, provider
+        self.workers = max(1, min(2, workers))
         self.cancel = threading.Event()
         self.lock = threading.Lock()
 
     def enqueue_document(self, identifier):
         document = self.store.document(identifier)
         for page in range(document["pages"]):
-            self.store.enqueue("page", f"{identifier}:{page}")
+            target = f"{identifier}:{page}"
+            if not self.store.completed_page(target):
+                self.store.enqueue("page", target)
 
     def run(self):
         if not self.lock.acquire(blocking=False):
             return
         self.cancel.clear()
         try:
-            while not self.cancel.is_set():
-                job = self.store.next_job()
-                if not job:
-                    break
-                self.store.job_status(job["id"], "running")
-                try:
-                    if job["kind"] == "page":
-                        self.process_page(job)
-                    else:
-                        self.process_question(job)
-                except Cancelled as exc:
-                    self.store.job_status(job["id"], "cancelled", str(exc))
-                except ProviderError as exc:
-                    self.store.job_status(job["id"], "paused", str(exc))
-                    break  # Authentication/network/quota errors do not burn retries on all items.
-                except Exception as exc:
-                    self.store.job_status(job["id"], "exception", f"{type(exc).__name__}: {str(exc)[:300]}")
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                futures = [pool.submit(self.run_worker) for _ in range(self.workers)]
+                for future in futures:
+                    future.result()
         finally:
             self.lock.release()
 
+    def run_worker(self):
+        while not self.cancel.is_set():
+            job = self.store.claim_job()
+            if not job:
+                return
+            try:
+                if job["kind"] == "page":
+                    self.process_page(job)
+                else:
+                    self.process_question(job)
+            except Cancelled as exc:
+                self.store.job_status(job["id"], "cancelled", str(exc))
+            except ProviderError as exc:
+                self.store.job_status(job["id"], "paused", str(exc))
+                self.cancel.set()
+            except Exception as exc:
+                self.store.job_status(job["id"], "exception", f"{type(exc).__name__}: {str(exc)[:300]}")
+
     def process_page(self, job):
         document_id, number = job["target"].rsplit(":", 1)
+        if self.store.document_trashed(document_id):
+            self.store.job_status(job['id'], 'cancelled', '삭제된 자료')
+            return
         document = self.store.document(document_id)
         with tempfile.TemporaryDirectory() as temp:
             with pymupdf.open(self.store.root / document["path"]) as pdf:
@@ -113,6 +132,9 @@ be included without ambiguity, kind=uncertain; do not silently truncate.''', [im
         if q["version"] != job["version"]:
             self.store.job_status(job["id"], "stale", "편집 후 이전 작업 무효화")
             return
+        if self.store.is_trashed(q):
+            self.store.job_status(job["id"], "cancelled", "삭제된 문항")
+            return
         document = self.store.document(q["document_id"])
         stages = initial_stages()
         for key in stages:
@@ -130,8 +152,8 @@ be included without ambiguity, kind=uncertain; do not silently truncate.''', [im
                     if candidate.get("uncertain", True):
                         raise ValueError("원문 판독 또는 도형 재작성 불확실")
                     mark(stages, "transcription", "passed", q["version"])
-                    independent = self.provider.call(CONTENT_PROMPT + "\nPerform a fresh independent reading from the image, not prior answers.\nCourse: " + document["course"], images, self.cancel)
-                    validate_content(independent)
+                    independent = self.provider.call(READ_PROMPT, images, self.cancel)
+                    validate_reading(independent)
                     issues = compare_readings(candidate, independent)
                     if independent.get("uncertain", True):
                         issues.append("독립 판독 불확실")
@@ -172,6 +194,8 @@ Candidate: ''' + json.dumps(candidate, ensure_ascii=False), images, self.cancel)
         self.store.job_status(job["id"], "exception", errors[-1]["reason"], 3, "자동 재처리 한도 도달")
 
     def save_result(self, q, candidate, stages, error):
+        if self.store.is_trashed(q):
+            return False
         if q["user_modified"]:
             # Update only checks, never user content. Version check remains atomic.
             with self.store.connect() as db:

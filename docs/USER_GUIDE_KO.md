@@ -1,4 +1,4 @@
-# MathBank Desktop 0.1.0 사용 안내
+# MathBank Desktop 0.2.0 사용 안내
 
 현재 개발판입니다. Windows EXE 포함 배포 폴더가 GitHub Actions에서 생성되고 자동 실행 검사를 통과했습니다.
 [Windows 빌드 목록](https://github.com/harrytim89-hong/harrytim/actions/workflows/windows-build.yml)에서
@@ -66,3 +66,9 @@ PyInstaller 빌드와 EXE 실행 검사는 Windows CI에서 통과했습니다. 
 Codex CLI는 앱에 인증 정보를 넣어 배포하지 않습니다. 공식 배포 및 ChatGPT 로그인은
 https://developers.openai.com/codex/cli 와 https://github.com/openai/codex 를 따릅니다.
 구독 사용 한도와 이미지 입력 지원은 설치된 CLI와 계정에 따라 확인해야 합니다.
+
+## 0.2.0 변경
+
+모델/추론 강도 지정, 최근 모델 표시·고정, 최대 2개 동시 처리, 독립 재판독 경량화,
+완료 페이지 재사용, 자료/문항/시험지/학생/배정 휴지통 및 복원 기능을 추가했습니다.
+자세한 설정과 업데이트 절차는 UPDATE_0_2_KO.md를 참고하세요.

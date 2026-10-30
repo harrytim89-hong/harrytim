@@ -51,3 +51,12 @@ SQLite connection context manager는 close를 하지 않으므로 backup/restore
 CI 성공 시에만 배포 폴더를 업로드한다. 일반 실행에는 smoke 옵션을 사용하지 않는다.
 GitHub API는 이 클라우드에서 Forbidden이지만 git push와 공개 Actions HTML 조회는 가능했다.
 워크플로우의 진단 주석으로 실패 로그를 확인할 수 있다. 임의 인증 추출은 하지 않는다.
+
+## 0.2.0 추가
+
+독립 재판독을 원문 전용 READ_PROMPT로 변경(최초 생성/최종 대조 유지).
+원자적 claim_job + 문항 우선 큐, 최대 2 workers. CLI 로그인 확인 5분 재사용.
+모델/effort/workers 설정 저장, 실제 CLI 헤더 모델 기록 및 최근 모델 고정 UI.
+trash 테이블은 스키마 v1의 additive 테이블이며 soft delete만 지원. 과거 record snapshots 유지.
+삭제 UI는 idle 상태에서만 실행. 완료 페이지 재등록 시 불필요한 AI 호출 생략.
+새 테스트 포함 Linux 40개 통과. 실제 사용자 교재 속도/정확도는 비교 검증 필요.
