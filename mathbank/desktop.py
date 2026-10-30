@@ -1,4 +1,5 @@
 """Native Qt desktop UI. All user data stays outside the application directory."""
+from .pdf_lock import PDF_LOCK
 import copy
 import json
 from pathlib import Path
@@ -118,7 +119,7 @@ class Preview(QDialog):
         try:
             if not ok or not Path(path).exists() or Path(path).stat().st_size < 100:
                 raise ValueError("빈 파일 또는 PDF 생성 실패")
-            with pymupdf.open(path) as pdf:
+            with PDF_LOCK, pymupdf.open(path) as pdf:
                 if pdf.page_count < 1:
                     raise ValueError("페이지가 없습니다.")
                 self.message.setText(f"PDF 저장 완료 · {pdf.page_count}페이지 · {path}")
@@ -324,7 +325,7 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         with tempfile.TemporaryDirectory() as temp:
-            with pymupdf.open(self.store.root / document["path"]) as pdf:
+            with PDF_LOCK, pymupdf.open(self.store.root / document["path"]) as pdf:
                 page = pdf[number-1]
                 width, height = page.rect.width, page.rect.height
                 image = Path(temp) / "page.png"

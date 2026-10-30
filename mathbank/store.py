@@ -1,4 +1,5 @@
 """Versioned local storage. Each operation owns a short SQLite transaction."""
+from .pdf_lock import PDF_LOCK
 import hashlib
 import json
 import os
@@ -95,7 +96,7 @@ class Store:
         if old:
             self.restore_trash("document", old[0])
             return old[0], False
-        with pymupdf.open(stream=payload, filetype="pdf") as pdf:
+        with PDF_LOCK, pymupdf.open(stream=payload, filetype="pdf") as pdf:
             if pdf.needs_pass:
                 raise ValueError("암호화 PDF입니다. 암호를 해제한 사본을 등록하세요.")
             if not pdf.page_count:

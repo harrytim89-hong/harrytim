@@ -1,4 +1,5 @@
 """Persistent, bounded, per-page/per-question processing; no teacher approval state."""
+from .pdf_lock import PDF_LOCK
 import copy
 import json
 from pathlib import Path
@@ -35,7 +36,7 @@ def crop(store, question, output, dpi=180):
     if digest((store.root / document["path"]).read_bytes()) != document["hash"]:
         raise ValueError("원본 PDF 해시가 변경되었습니다. 새 자료로 등록하세요.")
     images = []
-    with pymupdf.open(store.root / document["path"]) as pdf:
+    with PDF_LOCK, pymupdf.open(store.root / document["path"]) as pdf:
         for i, region in enumerate(question["regions"]):
             page = pdf[region["page"]]
             box = pymupdf.Rect(region["box"])
@@ -98,7 +99,7 @@ class Pipeline:
             return
         document = self.store.document(document_id)
         with tempfile.TemporaryDirectory() as temp:
-            with pymupdf.open(self.store.root / document["path"]) as pdf:
+            with PDF_LOCK, pymupdf.open(self.store.root / document["path"]) as pdf:
                 page = pdf[int(number)]
                 image = Path(temp) / "page.png"
                 page.get_pixmap(dpi=160).save(image)
