@@ -135,3 +135,17 @@ def test_provider_failure_is_visible_and_explicit_resume_recovers(tmp_path):
     app.processEvents()
     assert store.jobs()[0]['status'] == 'done'
     window.close()
+
+
+def test_bulk_restore_enables_connection_and_starts_queue(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    store = Store(tmp_path / 'restore')
+    window = MainWindow(store)
+    calls = []
+    store.restore_cancelled_jobs = lambda: 12
+    window.start_worker = lambda: calls.append(window.provider.enabled)
+    window.restore_cancelled_jobs()
+    assert calls == [True]
+    assert window._auto_run
+    assert '12' in window.statusBar().currentMessage()
+    window.close()

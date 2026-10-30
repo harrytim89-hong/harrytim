@@ -610,6 +610,7 @@ class MainWindow(QMainWindow):
     def build_jobs(self):
         layout = self.section("작업 큐 센터", "페이지·문항 단위 저장 · 최대 3가지 방법으로 재처리 · 인증/한도 오류 시 일시정지")
         self.row(layout, [("자동 처리 시작 · 재개", self.resume_jobs), ("진행 작업 취소", self.stop_processing), ("대기 작업 전체 취소", self.cancel_waiting), ("선택 예외 재시도", self.retry_job)])
+        self.row(layout, [("취소 작업 전체 복구 · 재개", self.restore_cancelled_jobs)])
         self.queue_status = QLabel()
         self.queue_status.setWordWrap(True)
         layout.addWidget(self.queue_status)
@@ -629,6 +630,14 @@ class MainWindow(QMainWindow):
         with self.store.connect() as db:
             db.execute("UPDATE jobs SET status='queued',error='' WHERE status='paused'")
         self.start_worker()
+
+    def restore_cancelled_jobs(self):
+        self.idle_required()
+        count = self.store.restore_cancelled_jobs()
+        if count:
+            self.resume_jobs()
+        self.refresh_jobs()
+        self.statusBar().showMessage(f"취소 작업 {count}개 복구 · 삭제된 자료와 이전 버전 작업은 제외")
 
     def retry_job(self):
         job = self.selected(self.jobs_table, self.job_rows)
@@ -868,6 +877,8 @@ class MainWindow(QMainWindow):
             state = "자동 시작 대기 (최대 1.5초)"
         elif counts.get('paused', 0):
             state = "중단 작업 있음 — ‘자동 처리 시작 · 재개’를 누르세요."
+        elif counts.get('cancelled', 0):
+            state = "취소 작업 있음 — ‘취소 작업 전체 복구 · 재개’를 누르세요."
         else:
             state = "처리할 대기 작업 없음"
         self.queue_status.setText(f"대기 {counts.get('queued', 0)} · 실행 {counts.get('running', 0)} · 중단 {counts.get('paused', 0)} · 완료 {counts.get('done', 0)}\n{state}")

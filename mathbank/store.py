@@ -247,6 +247,27 @@ class Store:
                 db.executemany("UPDATE jobs SET status='cancelled',error='사용자 취소' WHERE id=? "
                                "AND status IN ('queued','paused')", [(i,) for i in identifiers])
 
+    def restore_cancelled_jobs(self):
+        """Restore all current, live cancelled jobs, including rows beyond the UI limit."""
+        with self.connect() as db:
+            result = db.execute("""UPDATE jobs SET status='queued',error='',updated=?
+                WHERE status='cancelled'
+                AND NOT EXISTS (SELECT 1 FROM jobs other WHERE other.kind=jobs.kind
+                    AND other.target=jobs.target AND other.version=jobs.version
+                    AND (other.status IN ('done','skipped','queued','running','paused')
+                         OR (other.status='cancelled' AND other.rowid < jobs.rowid)))
+                AND (
+                    (kind='question' AND EXISTS (
+                        SELECT 1 FROM questions q WHERE q.id=jobs.target AND q.version=jobs.version
+                        AND NOT EXISTS (SELECT 1 FROM trash t WHERE
+                            (t.kind='question' AND t.target=q.id) OR
+                            (t.kind='document' AND t.target=q.document_id))))
+                    OR (kind='page' AND EXISTS (
+                        SELECT 1 FROM documents d WHERE jobs.target LIKE d.id || ':%'
+                        AND NOT EXISTS (SELECT 1 FROM trash t WHERE t.kind='document' AND t.target=d.id)))
+                )""", (now(),))
+            return result.rowcount
+
     def jobs(self):
         with self.connect() as db:
             return [dict(r) for r in db.execute("SELECT * FROM jobs ORDER BY rowid DESC LIMIT 300")]

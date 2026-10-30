@@ -492,3 +492,36 @@ def test_blank_or_edge_content_is_not_trimmed():
     pix.set_pixel(0, 0, (0, 0, 0))
     pix.set_pixel(49, 49, (254, 254, 254))
     assert trim_white_margin(pix) is pix
+
+
+def test_restore_all_cancelled_excludes_done_stale_deleted_and_duplicates(bank):
+    store, doc, qid = bank
+    first = store.enqueue('question', qid, 1)
+    store.cancel_jobs()
+    duplicate = store.enqueue('question', qid, 1)
+    store.cancel_jobs()
+    stale = store.enqueue('question', qid, 0)
+    store.cancel_jobs()
+    completed = store.enqueue('page', doc + ':0')
+    store.job_status(completed, 'done')
+    cancelled_done = store.enqueue('page', doc + ':0')
+    store.cancel_jobs()
+    removed = store.add_question(doc, [{'page':0,'box':[0,0,10,10]}])
+    deleted_job = store.enqueue('question', removed, 1)
+    store.move_to_trash('question', [removed])
+    assert store.restore_cancelled_jobs() == 1
+    statuses = {j['id']: j['status'] for j in store.jobs()}
+    assert statuses[first] == 'queued'
+    assert statuses[completed] == 'done'
+    assert all(statuses[j] == 'cancelled' for j in [duplicate, stale, cancelled_done, deleted_job])
+    assert store.restore_cancelled_jobs() == 0
+
+
+def test_restore_cancelled_includes_beyond_visible_300_rows(bank):
+    store, doc, _ = bank
+    for i in range(305):
+        q = store.add_question(doc, [{'page':0,'box':[0,0,10,i+1]}])
+        store.enqueue('question', q, 1)
+    store.cancel_jobs()
+    assert len(store.jobs()) == 300
+    assert store.restore_cancelled_jobs() == 305
