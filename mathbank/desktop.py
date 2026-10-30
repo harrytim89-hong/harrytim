@@ -207,7 +207,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.nav)
         right = QVBoxLayout()
         outer.addLayout(right)
-        brand = QLabel("MATHBANK  /  DESKTOP  0.2.2")
+        brand = QLabel("MATHBANK  /  DESKTOP  0.2.3")
         brand.setStyleSheet("font-size:24px;font-weight:700;color:#087e82;padding:16px")
         right.addWidget(brand)
         self.tabs = QTabWidget()

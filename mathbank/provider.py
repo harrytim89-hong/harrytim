@@ -67,10 +67,12 @@ class CodexProvider:
             output = root / "response.json"
             args = [shutil.which("codex"), "exec", "--ephemeral", "--skip-git-repo-check",
                     "--sandbox", "read-only", "--output-last-message", str(output), "--color", "never",
-                    "--ignore-user-config", "--disable", "shell_tool", "--disable", "unified_exec",
-                    "--disable", "apps", "--disable", "js_repl", "--disable", "multi_agent",
-                    "--disable", "browser_use", "-c", "mcp_servers={}", "-c", 'web_search="disabled"',
+                    "--ignore-user-config", "-c", "mcp_servers={}", "-c", 'web_search="disabled"',
                     "-c", "features.skip_host_skill_discovery=true"]
+            # --disable rejects feature names unknown to older CLI versions. TOML
+            # overrides keep known tools disabled without requiring those names to exist.
+            for feature in ("shell_tool", "unified_exec", "apps", "js_repl", "multi_agent", "browser_use"):
+                args += ["-c", f"features.{feature}=false"]
             if self.model:
                 args += ["--model", self.model]
             if self.effort:
@@ -140,6 +142,20 @@ def diagnose(log):
     """Categorical diagnostics only: never return raw provider output or credentials."""
     text = log.lower()
     for terms, message in [
+        (("unexpected argument", "unrecognized option", "unknown option", "unknown feature", "unrecognized feature"),
+         "CLI 옵션 호환성 오류입니다. PowerShell에서 codex --version을 확인하고 공식 Codex CLI를 업데이트하세요."),
+        (("model_not_found", "model not found", "does not exist", "not supported when using codex with a chatgpt", "unsupported model", "invalid model", "not have access to model", "not have access to the model"),
+         "지정 모델을 사용할 수 없습니다. AI 설정에서 지정 모델을 비우고 저장한 뒤 재개하세요. 채팅 모델 별칭과 Codex 모델 ID는 다를 수 있습니다."),
+        (("reasoning effort", "reasoning_effort", "unsupported value"),
+         "모델 또는 추론 옵션이 지원되지 않습니다. 지정 모델을 비우고 추론 강도를 기본값으로 저장한 뒤 재개하세요."),
+        (("error loading config", "failed to parse", "toml parse", "invalid configuration"),
+         "Codex 설정을 읽지 못했습니다. CLI 버전과 설정 형식의 호환성을 확인하세요."),
+        (("cannot find module", "module_not_found", "enoent", "not recognized as an internal", "지정된 경로를 찾을 수"),
+         "Codex 설치 파일 또는 실행 경로가 누락되었습니다. PowerShell에서도 codex --version이 실행되는지 확인하세요."),
+        (("certificate", "unknown issuer", "tls handshake", "ssl error"),
+         "TLS 인증서 연결 오류입니다. PC 시간과 회사/보안 프로그램의 HTTPS 인증서 설정을 확인하세요."),
+        (("refresh_token", "token has expired", "session expired"),
+         "Codex 로그인 세션이 만료되었습니다. PowerShell에서 codex login으로 다시 로그인하세요."),
         (("usage limit", "rate limit", "quota"), "구독 사용 한도 또는 호출 제한이 감지되었습니다."),
         (("401", "unauthorized", "not logged in"), "인증 오류가 감지되었습니다. ChatGPT 로그인을 확인하세요."),
         (("403", "forbidden"), "서비스 접근 거부가 감지되었습니다."),
