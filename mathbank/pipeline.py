@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 import pymupdf
 from .provider import ProviderError, Cancelled
 from .validation import initial_stages, mark, validate_content, compare_readings, validate_reading
+from .checkpoints import Checkpoints
+from .images import trim_white_margin
 
 READ_PROMPT = r'''Perform a fresh independent reading of ONLY the source IMAGE.
 Return {"text":string,"choices":[string],"uncertain":boolean}.
@@ -43,17 +45,55 @@ def crop(store, question, output, dpi=180):
             if box.is_empty or not page.rect.contains(box):
                 raise ValueError("문항 영역이 페이지 범위를 벗어났습니다.")
             path = Path(output) / f"crop-{i}.png"
-            page.get_pixmap(clip=box, dpi=dpi).save(path)
+            trim_white_margin(page.get_pixmap(clip=box, dpi=dpi)).save(path)
             images.append(path)
     return images
 
 
 class Pipeline:
-    def __init__(self, store, provider, workers=1):
+    def __init__(self, store, provider, workers=1, parallel_reads=False):
         self.store, self.provider = store, provider
         self.workers = max(1, min(2, workers))
         self.cancel = threading.Event()
         self.lock = threading.Lock()
+        self.parallel_reads = parallel_reads
+        self.checkpoints = Checkpoints(store, provider)
+
+    def readings(self, q, document, method, images):
+        def candidate():
+            if q['user_modified']:
+                return copy.deepcopy(q['content'])
+            def validate(value):
+                validate_content(value)
+                if value.get('uncertain', True):
+                    raise ValueError('원문 판독 또는 도형 재작성 불확실')
+            return self.checkpoints.call(q, 'content', CONTENT_PROMPT + '\nCourse scope: ' +
+                document['course'] + '\nMethod: ' + method, images, self.cancel, validate)
+
+        def independent():
+            def validate(value):
+                validate_reading(value)
+                if value.get('uncertain', True):
+                    raise ValueError('독립 판독 불확실')
+            return self.checkpoints.call(q, 'reading', READ_PROMPT, images, self.cancel, validate)
+
+        if self.parallel_reads and not q['user_modified']:
+            # Separate fresh requests. The independent reader never sees the candidate.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(candidate)
+                second = pool.submit(independent)
+                errors = [f.exception() for f in (first, second) if f.exception() is not None]
+                for error in errors:
+                    if isinstance(error, ProviderError):
+                        raise error
+                if errors:
+                    raise errors[0]
+                return first.result(), second.result()
+        first = candidate()
+        validate_content(first)
+        if first.get('uncertain', True):
+            raise ValueError('원문 판독 또는 도형 재작성 불확실')
+        return first, independent()
 
     def enqueue_document(self, identifier):
         document = self.store.document(identifier)
@@ -67,6 +107,8 @@ class Pipeline:
             return
         self.cancel.clear()
         try:
+            if hasattr(self.provider, 'set_concurrency'):
+                self.provider.set_concurrency(self.workers)
             with ThreadPoolExecutor(max_workers=self.workers) as pool:
                 futures = [pool.submit(self.run_worker) for _ in range(self.workers)]
                 for future in futures:
@@ -147,13 +189,11 @@ be included without ambiguity, kind=uncertain; do not silently truncate.''', [im
             with tempfile.TemporaryDirectory() as temp:
                 images = crop(self.store, q, temp, dpi)
                 try:
-                    candidate = copy.deepcopy(q["content"]) if q["user_modified"] else self.provider.call(
-                        CONTENT_PROMPT + "\nCourse scope: " + document["course"] + "\nMethod: " + method, images, self.cancel)
+                    candidate, independent = self.readings(q, document, method, images)
                     validate_content(candidate)
                     if candidate.get("uncertain", True):
                         raise ValueError("원문 판독 또는 도형 재작성 불확실")
                     mark(stages, "transcription", "passed", q["version"])
-                    independent = self.provider.call(READ_PROMPT, images, self.cancel)
                     validate_reading(independent)
                     issues = compare_readings(candidate, independent)
                     if independent.get("uncertain", True):
@@ -164,7 +204,9 @@ be included without ambiguity, kind=uncertain; do not silently truncate.''', [im
 Check conditions, signs, exponents, all choices, diagram relations, answer and every solution step.
 Check course restrictions. Return {"source_ok":boolean,"diagram_ok":boolean,"answer_ok":boolean,
 "solution_ok":boolean,"course_ok":boolean,"reasons":[string]}. Do not approve uncertain results.
-Candidate: ''' + json.dumps(candidate, ensure_ascii=False), images, self.cancel)
+Candidate: ''' + json.dumps({k: v for k, v in candidate.items() if k in (
+                        'text', 'choices', 'diagram', 'answer', 'solution', 'course', 'unit', 'level', 'reason', 'uncertain')},
+                        ensure_ascii=False, separators=(',', ':')) + '\nRequired course: ' + document['course'], images, self.cancel)
                     for field in ("source_ok", "diagram_ok", "answer_ok", "solution_ok", "course_ok"):
                         if type(review.get(field)) is not bool:
                             raise ValueError("검사 응답 스키마 오류")
@@ -185,8 +227,10 @@ Candidate: ''' + json.dumps(candidate, ensure_ascii=False), images, self.cancel)
                         self.store.job_status(job["id"], "stale", "편집 이후 도착한 결과를 폐기했습니다.")
                         return
                     self.store.job_status(job["id"], "done" if not error else "exception", error, attempt, method)
+                    self.checkpoints.clear(q['id'])
                     return
                 except ValueError as exc:
+                    self.checkpoints.clear(q['id'])
                     errors.append({"attempt": attempt, "method": method, "reason": str(exc)[:500]})
                     self.store.put_record("attempt", {"question_id": q["id"], "version": q["version"], **errors[-1]})
         for key in ("comparison", "diagram"):

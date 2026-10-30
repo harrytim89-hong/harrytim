@@ -5,6 +5,7 @@
 [Windows 다운로드](https://github.com/harrytim89-hong/harrytim/actions/workflows/windows-build.yml): 최신 성공 실행의 Artifacts에서 `MathBankDesktop-Windows-x64`를 받으세요.
 
 - [사용 안내](docs/USER_GUIDE_KO.md)
+- [0.3.0 자동처리 효율 설정과 검증 범위](docs/UPDATE_0_3_0_KO.md)
 - [요구별 구현·검증·미완료 상태](docs/IMPLEMENTATION_STATUS.md)
 - [Windows 수용 검사](docs/WINDOWS_ACCEPTANCE.md)
 - [의존성 라이선스](docs/THIRD_PARTY.md)

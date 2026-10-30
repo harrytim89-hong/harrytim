@@ -386,3 +386,109 @@ def test_two_workers_complete_distinct_questions(bank):
     Pipeline(store,provider,workers=2).run()
     assert provider.calls == 6
     assert printable(store.question(qid)) and printable(store.question(q2))
+
+
+def test_resume_reuses_two_readings_but_always_runs_review(bank):
+    from mathbank.provider import ProviderError
+    store, _, qid = bank
+    provider = ScriptedProvider([content(), content(), ProviderError('network')])
+    pipeline = Pipeline(store, provider)
+    store.enqueue('question', qid, 1)
+    pipeline.run()
+    assert not printable(store.question(qid))
+    assert len(store.records('ai_checkpoint')) == 2
+    with store.connect() as db:
+        db.execute("UPDATE jobs SET status='queued' WHERE status='paused'")
+    # A new pipeline simulates restarting the app. Only review should be called.
+    resumed = ScriptedProvider([REVIEW])
+    Pipeline(store, resumed).run()
+    assert len(resumed.calls) == 1 and 'source_ok' in resumed.calls[0][0]
+    assert printable(store.question(qid))
+    assert not store.records('ai_checkpoint')
+    assert len(store.records('ai_cache_metric')) == 2
+
+
+def test_parallel_reading_is_independent_and_overlaps(bank):
+    import threading
+    from mathbank.pipeline import READ_PROMPT
+    store, _, qid = bank
+    barrier = threading.Barrier(2)
+    class Provider:
+        def call(self, prompt, images, cancel):
+            if 'source_ok' in prompt:
+                return copy.deepcopy(REVIEW)
+            barrier.wait(timeout=3)  # Fails if the two calls run sequentially.
+            if 'fresh independent' in prompt:
+                assert prompt == READ_PROMPT
+                assert 'Candidate:' not in prompt
+            return content()
+    store.enqueue('question', qid, 1)
+    Pipeline(store, Provider(), parallel_reads=True).run()
+    assert printable(store.question(qid))
+
+
+def test_parallel_provider_failure_takes_priority_over_bad_content(bank):
+    from mathbank.provider import ProviderError
+    store, _, qid = bank
+    class Provider:
+        def call(self, prompt, images, cancel):
+            if 'fresh independent' in prompt:
+                raise ProviderError('rate limit')
+            return dict(content(), uncertain=True)
+    store.enqueue('question', qid, 1)
+    Pipeline(store, Provider(), parallel_reads=True).run()
+    with store.connect() as db:
+        assert db.execute('SELECT status FROM jobs').fetchone()[0] == 'paused'
+    assert not printable(store.question(qid))
+
+
+@pytest.mark.parametrize('changed', ['version', 'prompt', 'image', 'model', 'effort', 'reading_effort', 'expired'])
+def test_checkpoint_exact_input_invalidation(bank, tmp_path, changed):
+    import threading
+    from mathbank.checkpoints import Checkpoints
+    store, _, qid = bank
+    q = store.question(qid)
+    provider = ScriptedProvider([content(), content()])
+    cache = Checkpoints(store, provider)
+    image = tmp_path / 'image.png'
+    image.write_bytes(b'original image')
+    prompt = 'read source'
+    cache.call(q, 'content', prompt, [image], threading.Event(), validate_content)
+    if changed == 'version': q['version'] += 1
+    elif changed == 'prompt': prompt += ' new instruction'
+    elif changed == 'image': image.write_bytes(b'new image')
+    elif changed == 'expired':
+        key = 'ai-checkpoint-' + qid + '-content'
+        saved = store.record(key)
+        saved['time'] = 0
+        saved.pop('id')
+        store.put_record('ai_checkpoint', saved, key)
+    else: setattr(provider, changed, 'new-setting')
+    cache.call(q, 'content', prompt, [image], threading.Event(), validate_content)
+    assert len(provider.calls) == 2
+
+
+def test_white_trim_preserves_even_faint_pixels_and_resolution():
+    from mathbank.images import trim_white_margin
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(20, 30, 320, 230), 0)
+    pix.clear_with(255)
+    pix.set_pixel(100, 80, (254, 255, 255))
+    pix.set_pixel(150, 120, (0, 0, 0))
+    pix.set_dpi(260, 260)
+    result = trim_white_margin(pix)
+    assert (result.width, result.height) == (75, 65)
+    assert result.xres == result.yres == 260
+    for y in range(result.height):
+        for x in range(result.width):
+            assert result.pixel(x, y) == pix.pixel(x + 88, y + 68)
+    assert trim_white_margin(result).samples == result.samples
+
+
+def test_blank_or_edge_content_is_not_trimmed():
+    from mathbank.images import trim_white_margin
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 50, 50), 0)
+    pix.clear_with(255)
+    assert trim_white_margin(pix) is pix
+    pix.set_pixel(0, 0, (0, 0, 0))
+    pix.set_pixel(49, 49, (254, 254, 254))
+    assert trim_white_margin(pix) is pix

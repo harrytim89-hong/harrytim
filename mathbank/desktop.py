@@ -185,11 +185,13 @@ class MainWindow(QMainWindow):
         self.store = store or Store()
         settings = self.store.records("ai_settings")
         settings = settings[0] if settings else {}
-        self.provider = CodexProvider(model=settings.get("model", ""), effort=settings.get("effort", ""), store=self.store)
+        self.provider = CodexProvider(model=settings.get("model", ""), effort=settings.get("effort", ""),
+                                      reading_effort=settings.get("reading_effort", ""), store=self.store)
         observed = self.store.records("ai_observed")
         if observed:
             self.provider.observed_model = observed[0].get("model", "")
-        self.pipeline = Pipeline(self.store, self.provider, workers=settings.get("workers", 2))
+        self.pipeline = Pipeline(self.store, self.provider, workers=settings.get("workers", 2),
+                                 parallel_reads=settings.get("parallel_reads", False))
         self.thread = None
         self._auto_run = True
         self._worker_error = ""
@@ -649,6 +651,13 @@ class MainWindow(QMainWindow):
         self.effort_field.addItems(["기본값 유지", "medium", "high", "xhigh"])
         self.effort_field.setCurrentText(self.provider.effort or "기본값 유지")
         form.addRow("추론 강도", self.effort_field)
+        self.reading_effort_field = QComboBox()
+        self.reading_effort_field.addItems(["기존 강도 유지", "medium", "low"])
+        self.reading_effort_field.setCurrentText(self.provider.reading_effort or "기존 강도 유지")
+        form.addRow("독립 판독 강도 (풀이·검토 제외)", self.reading_effort_field)
+        self.parallel_reads_field = QCheckBox("풀이·독립 판독 동시 실행 (불확실한 문항은 호출이 늘 수 있음)")
+        self.parallel_reads_field.setChecked(self.pipeline.parallel_reads)
+        form.addRow(self.parallel_reads_field)
         self.worker_field = QSpinBox()
         self.worker_field.setRange(1, 2)
         self.worker_field.setValue(self.pipeline.workers)
@@ -682,9 +691,12 @@ class MainWindow(QMainWindow):
             raise ValueError("모델 ID 형식을 확인하세요.")
         self.provider.model = model
         self.provider.effort = "" if self.effort_field.currentIndex() == 0 else self.effort_field.currentText()
+        self.provider.reading_effort = "" if self.reading_effort_field.currentIndex() == 0 else self.reading_effort_field.currentText()
+        self.pipeline.parallel_reads = self.parallel_reads_field.isChecked()
         self.pipeline.workers = self.worker_field.value()
         self.store.put_record("ai_settings", {"model": model, "effort": self.provider.effort,
-                              "workers": self.pipeline.workers}, "ai-settings")
+                              "workers": self.pipeline.workers, "reading_effort": self.provider.reading_effort,
+                              "parallel_reads": self.pipeline.parallel_reads}, "ai-settings")
         self.refresh_jobs()
         self.statusBar().showMessage("AI 설정 저장 완료. 다음 요청부터 적용합니다. 모델 자동 대체는 하지 않습니다.")
 
@@ -833,6 +845,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, "model_status"):
             actual = self.provider.observed_model or "아직 확인되지 않음"
             self.model_status.setText(f"최근 CLI 실행 모델: {actual} · 지정: {self.provider.model or 'CLI 기본값'} · 동시 {self.pipeline.workers}개")
+            with self.store.connect() as db:
+                usage = db.execute("SELECT COUNT(*), SUM(json_extract(body,'$.tokens')), "
+                    "COUNT(json_extract(body,'$.tokens')) FROM records WHERE kind='ai_metric'").fetchone()
+                saved = db.execute("SELECT COALESCE(SUM(json_extract(body,'$.calls_saved')),0) "
+                    "FROM records WHERE kind='ai_cache_metric'").fetchone()[0]
+            tokens = f"{usage[1]:,}" if usage[2] else "미제공"
+            self.model_status.setText(self.model_status.text() +
+                f"\n누적 성공 호출 {usage[0]}회 · CLI 보고 토큰 {tokens} ({usage[2]}회 집계) · 재개 시 생략 {saved}회")
         with self.store.connect() as db:
             counts = dict(db.execute("SELECT status,COUNT(*) FROM jobs GROUP BY status"))
             paused = db.execute("SELECT error FROM jobs WHERE status='paused' ORDER BY updated DESC LIMIT 1").fetchone()

@@ -2,7 +2,7 @@
 [Setup]
 AppId=MathBankDesktop
 AppName=MathBank Desktop
-AppVersion=0.2.3
+AppVersion=0.3.0
 DefaultDirName={localappdata}\Programs\MathBankDesktop
 DefaultGroupName=MathBank Desktop
 PrivilegesRequired=lowest

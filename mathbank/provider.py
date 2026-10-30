@@ -31,12 +31,18 @@ def terminate(process):
 
 
 class CodexProvider:
-    def __init__(self, enabled=False, timeout=180, model="", effort="", store=None):
+    def __init__(self, enabled=False, timeout=180, model="", effort="", store=None, reading_effort=""):
         self.enabled, self.timeout = enabled, timeout
         self.model, self.effort, self.store = model, effort, store
         self.observed_model = ""
         self._auth_until = 0
         self._auth_lock = threading.Lock()
+        self.reading_effort = reading_effort
+        self._slots = threading.BoundedSemaphore(2)
+
+    def set_concurrency(self, limit):
+        # Called only before a pipeline run, when there are no active requests.
+        self._slots = threading.BoundedSemaphore(max(1, min(2, limit)))
 
     def status(self):
         executable = shutil.which("codex")
@@ -50,7 +56,20 @@ class CodexProvider:
             return False, "ChatGPT 구독 로그인이 확인되지 않습니다. codex login을 사용하세요. API 인증은 구독 인증으로 취급하지 않습니다."
         return True, "ChatGPT 로그인 확인 · 실제 이미지 연결 시험은 별도입니다."
 
-    def call(self, prompt, images, cancel=None):
+    def call(self, prompt, images, cancel=None, *, purpose="general"):
+        # One shared bound, including parallel reads across question workers.
+        while not self._slots.acquire(timeout=.1):
+            if cancel and cancel.is_set():
+                raise Cancelled("사용자가 작업을 취소했습니다.")
+        try:
+            return self._call(prompt, images, cancel, purpose=purpose)
+        finally:
+            self._slots.release()
+
+    def read(self, prompt, images, cancel=None):
+        return self.call(prompt, images, cancel, purpose="reading")
+
+    def _call(self, prompt, images, cancel=None, *, purpose="general"):
         if cancel and cancel.is_set():
             raise Cancelled("사용자가 작업을 취소했습니다.")
         if not self.enabled:
@@ -62,6 +81,7 @@ class CodexProvider:
                     raise ProviderError(message)
                 self._auth_until = time.monotonic() + 300
         started = time.monotonic()
+        effort = (self.reading_effort or self.effort) if purpose == "reading" else self.effort
         with tempfile.TemporaryDirectory(prefix="mathbank-ai-") as directory:
             root = Path(directory)
             output = root / "response.json"
@@ -75,8 +95,8 @@ class CodexProvider:
                 args += ["-c", f"features.{feature}=false"]
             if self.model:
                 args += ["--model", self.model]
-            if self.effort:
-                args += ["-c", 'model_reasoning_effort=' + json.dumps(self.effort)]
+            if effort:
+                args += ["-c", 'model_reasoning_effort=' + json.dumps(effort)]
             for i, image in enumerate(images):
                 copied = root / f"source-{i}.png"
                 shutil.copyfile(image, copied)
@@ -115,7 +135,8 @@ class CodexProvider:
                 raise ProviderError(f"Codex 호출 실패 (종료 코드 {process.returncode}). " + detail)
             if output.stat().st_size > 1_000_000:
                 raise ProviderError("AI 응답 크기 제한 초과")
-            self.observe_model((root / "process.log").read_text(encoding="utf-8", errors="replace"))
+            process_log = (root / "process.log").read_text(encoding="utf-8", errors="replace")
+            self.observe_model(process_log)
             text = output.read_text(encoding="utf-8").strip()
             if text.startswith("```"):
                 text = text.split("\n", 1)[1].rsplit("```", 1)[0]
@@ -127,7 +148,9 @@ class CodexProvider:
                 raise ProviderError("AI 응답 객체가 필요합니다.")
             if self.store:
                 self.store.put_record("ai_metric", {"model": self.observed_model or self.model or "CLI 기본값",
-                    "effort": self.effort or "CLI 기본값", "seconds": round(time.monotonic()-started, 2)})
+                    "purpose": purpose, "effort": effort or "CLI 기본값",
+                    "tokens": token_usage(process_log),
+                    "seconds": round(time.monotonic()-started, 2)})
             return result
 
     def observe_model(self, text):
@@ -136,6 +159,12 @@ class CodexProvider:
             self.observed_model = match.group(1)
             if self.store:
                 self.store.put_record("ai_observed", {"model": self.observed_model}, "ai-observed-model")
+
+
+def token_usage(log):
+    """CLI-reported total only; unknown is null, never an invented zero."""
+    matches = re.findall(r"(?m)^tokens used\s*\n([\d,]+)\s*$", log)
+    return int(matches[-1].replace(",", "")) if matches else None
 
 
 def diagnose(log):

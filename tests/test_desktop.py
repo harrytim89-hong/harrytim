@@ -11,6 +11,7 @@ def test_native_sections_and_empty_state(tmp_path):
     window = MainWindow(Store(tmp_path / 'data'))
     window.show()
     app.processEvents()
+
     assert window.windowTitle() == 'MathBank Desktop'
     for index in range(6):
         window.nav.setCurrentRow(index)
@@ -20,6 +21,23 @@ def test_native_sections_and_empty_state(tmp_path):
     assert window.bank_total == 0
     assert not window.provider.enabled
     window.close()
+    app.processEvents()
+
+
+def test_efficiency_settings_persist_without_changing_solver(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    store = Store(tmp_path / 'settings')
+    window = MainWindow(store)
+    window.effort_field.setCurrentText('high')
+    window.reading_effort_field.setCurrentText('medium')
+    window.parallel_reads_field.setChecked(True)
+    window.save_ai_settings()
+    window.close()
+    restored = MainWindow(store)
+    assert restored.provider.effort == 'high'
+    assert restored.provider.reading_effort == 'medium'
+    assert restored.pipeline.parallel_reads
+    restored.close()
     app.processEvents()
 
 
