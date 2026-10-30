@@ -68,3 +68,52 @@ def test_bank_refresh_keeps_selection_and_detects_new_items(tmp_path):
     assert len(rows)==1 and window.questions[rows[0].row()]['id']==first
     assert '갱신' in window.bank_count.text()
     window.close()
+
+
+def test_resume_drains_300_queued_jobs_without_settings_step(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    store = Store(tmp_path / 'bulk')
+    for number in range(300):
+        store.enqueue('page', f'fixture:{number}')
+    cancelled = store.enqueue('page', 'cancelled:0')
+    store.job_status(cancelled, 'cancelled', '사용자 취소')
+    paused = store.enqueue('page', 'paused:0')
+    store.job_status(paused, 'paused', 'previous error')
+    window = MainWindow(store)
+    window.pipeline.process_page = lambda job: store.job_status(job['id'], 'done')
+    assert not window.provider.enabled
+    assert 'AI 연결 꺼짐' in window.queue_status.text()
+    window.resume_jobs()
+    window.thread.join(timeout=15)
+    assert not window.thread.is_alive()
+    app.processEvents()
+    window.refresh_jobs()
+    with store.connect() as db:
+        counts = dict(db.execute('SELECT status,COUNT(*) FROM jobs GROUP BY status'))
+    assert counts == {'cancelled': 1, 'done': 301}
+    assert '완료 301' in window.queue_status.text()
+    window.close()
+
+
+def test_provider_failure_is_visible_and_explicit_resume_recovers(tmp_path):
+    from mathbank.provider import ProviderError
+    app = QApplication.instance() or QApplication([])
+    store = Store(tmp_path / 'failure')
+    store.enqueue('page', 'fixture:0')
+    window = MainWindow(store)
+    def fail(job):
+        raise ProviderError('Codex 시작 실패 (0xc0000142)')
+    window.pipeline.process_page = fail
+    window.resume_jobs()
+    window.thread.join(timeout=3)
+    app.processEvents()
+    window.poll_work()
+    window.refresh_jobs()
+    assert '0xc0000142' in window.queue_status.text()
+    assert not window._auto_run
+    window.pipeline.process_page = lambda job: store.job_status(job['id'], 'done')
+    window.resume_jobs()
+    window.thread.join(timeout=3)
+    app.processEvents()
+    assert store.jobs()[0]['status'] == 'done'
+    window.close()

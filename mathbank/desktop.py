@@ -192,6 +192,7 @@ class MainWindow(QMainWindow):
         self.pipeline = Pipeline(self.store, self.provider, workers=settings.get("workers", 2))
         self.thread = None
         self._auto_run = True
+        self._worker_error = ""
         self.signals = WorkerSignals()
         self.signals.done.connect(self.worker_finished)
         self.page = 0
@@ -206,7 +207,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.nav)
         right = QVBoxLayout()
         outer.addLayout(right)
-        brand = QLabel("MATHBANK  /  DESKTOP  0.2.1")
+        brand = QLabel("MATHBANK  /  DESKTOP  0.2.2")
         brand.setStyleSheet("font-size:24px;font-weight:700;color:#087e82;padding:16px")
         right.addWidget(brand)
         self.tabs = QTabWidget()
@@ -311,9 +312,13 @@ class MainWindow(QMainWindow):
             return
         if not self.provider.enabled:
             raise ValueError("작업은 큐에 저장되었습니다. AI · 백업 설정에서 구독 연결을 켜고 작업 큐에서 재개하세요.")
+        self._worker_error = ""
         def work():
             try:
                 self.pipeline.run()
+            except Exception as exc:
+                self._worker_error = f"{type(exc).__name__}: {str(exc)[:300]}"
+                self.pipeline.cancel.set()
             finally:
                 self.signals.done.emit()
         self.thread = threading.Thread(target=work, daemon=True)
@@ -602,13 +607,25 @@ class MainWindow(QMainWindow):
 
     def build_jobs(self):
         layout = self.section("작업 큐 센터", "페이지·문항 단위 저장 · 최대 3가지 방법으로 재처리 · 인증/한도 오류 시 일시정지")
-        self.row(layout, [("대기 · 중단 작업 재개", self.resume_jobs), ("진행 작업 취소", self.stop_processing), ("대기 작업 전체 취소", self.cancel_waiting), ("선택 예외 재시도", self.retry_job)])
+        self.row(layout, [("자동 처리 시작 · 재개", self.resume_jobs), ("진행 작업 취소", self.stop_processing), ("대기 작업 전체 취소", self.cancel_waiting), ("선택 예외 재시도", self.retry_job)])
+        self.queue_status = QLabel()
+        self.queue_status.setWordWrap(True)
+        layout.addWidget(self.queue_status)
         self.jobs_table = self.table(layout, ["작업", "대상", "상태", "시도", "방법", "사유"])
 
     def resume_jobs(self):
+        if self.thread and self.thread.is_alive():
+            if self.pipeline.cancel.is_set():
+                raise ValueError("이전 작업을 종료하는 중입니다. 종료 후 다시 시작해 주세요.")
+            return
+        # Starting the queue is an explicit request to use the subscription connection.
+        self.ai_enabled.setChecked(True)
+        self.provider.enabled = True
         self._auto_run = True
+        self._worker_error = ""
+        self.pipeline.cancel.clear()
         with self.store.connect() as db:
-            db.execute("UPDATE jobs SET status='queued' WHERE status IN ('paused','cancelled')")
+            db.execute("UPDATE jobs SET status='queued',error='' WHERE status='paused'")
         self.start_worker()
 
     def retry_job(self):
@@ -795,6 +812,9 @@ class MainWindow(QMainWindow):
         self.pipeline.cancel.set()
 
     def worker_finished(self):
+        if self.thread and self.thread.is_alive():
+            QTimer.singleShot(50, self.worker_finished)
+            return
         if self.pipeline.cancel.is_set():
             self._auto_run = False
         self.refresh()
@@ -804,6 +824,8 @@ class MainWindow(QMainWindow):
         active = bool(self.thread and self.thread.is_alive())
         if active and self.bank_auto.isChecked() and self.tabs.currentIndex() == 1:
             self.refresh_bank()
+        if not active and self.pipeline.cancel.is_set():
+            self._auto_run = False
         if not active and self._auto_run and self.provider.enabled and self.store.next_job():
             self.start_worker()
 
@@ -811,6 +833,24 @@ class MainWindow(QMainWindow):
         if hasattr(self, "model_status"):
             actual = self.provider.observed_model or "아직 확인되지 않음"
             self.model_status.setText(f"최근 CLI 실행 모델: {actual} · 지정: {self.provider.model or 'CLI 기본값'} · 동시 {self.pipeline.workers}개")
+        with self.store.connect() as db:
+            counts = dict(db.execute("SELECT status,COUNT(*) FROM jobs GROUP BY status"))
+            paused = db.execute("SELECT error FROM jobs WHERE status='paused' ORDER BY updated DESC LIMIT 1").fetchone()
+        active = bool(self.thread and self.thread.is_alive())
+        if active:
+            state = "종료 중" if self.pipeline.cancel.is_set() else "자동 처리 중"
+        elif not self.provider.enabled:
+            state = "AI 연결 꺼짐 — ‘자동 처리 시작 · 재개’를 누르세요."
+        elif self.pipeline.cancel.is_set() or not self._auto_run:
+            reason = self._worker_error or (paused[0] if paused else "사용자 중지")
+            state = f"처리 정지: {reason} — 원인 해결 후 ‘자동 처리 시작 · 재개’를 누르세요."
+        elif counts.get('queued', 0):
+            state = "자동 시작 대기 (최대 1.5초)"
+        elif counts.get('paused', 0):
+            state = "중단 작업 있음 — ‘자동 처리 시작 · 재개’를 누르세요."
+        else:
+            state = "처리할 대기 작업 없음"
+        self.queue_status.setText(f"대기 {counts.get('queued', 0)} · 실행 {counts.get('running', 0)} · 중단 {counts.get('paused', 0)} · 완료 {counts.get('done', 0)}\n{state}")
         self.job_rows = self.store.jobs()
         self.fill(self.jobs_table, [(j["kind"], j["target"][:12], j["status"], j["attempt"], j["method"], j["error"]) for j in self.job_rows])
 
