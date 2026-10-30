@@ -9,6 +9,7 @@ import tempfile
 import time
 import re
 import threading
+from .processes import external_popen, external_run, startup_failure
 
 
 class ProviderError(RuntimeError):
@@ -23,7 +24,7 @@ def terminate(process):
     if process.poll() is not None:
         return
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
+        external_run(["taskkill", "/PID", str(process.pid), "/T", "/F"])
     else:
         os.killpg(process.pid, signal.SIGKILL)
     process.wait(timeout=10)
@@ -41,7 +42,9 @@ class CodexProvider:
         executable = shutil.which("codex")
         if not executable:
             return False, "Codex CLI가 없습니다. 공식 설치 안내에 따라 설치 후 ChatGPT로 로그인하세요."
-        result = subprocess.run([executable, "login", "status"], capture_output=True, text=True, timeout=15)
+        result = external_run([executable, "login", "status"])
+        if startup_failure(result.returncode):
+            return False, "Codex 시작 실패 (0xc0000142). DLL 초기화 오류입니다. 앱 외부에서 Codex 실행 여부와 전체 압축 해제를 확인하세요."
         text = result.stdout + result.stderr
         if result.returncode or "ChatGPT" not in text:
             return False, "ChatGPT 구독 로그인이 확인되지 않습니다. codex login을 사용하세요. API 인증은 구독 인증으로 취급하지 않습니다."
@@ -83,7 +86,7 @@ class CodexProvider:
                              "Only analyze the attached source images. Return one JSON object, no markdown.\n" + prompt)
             with (root / "input.txt").open("r", encoding="utf-8") as source:
                 with (root / "process.log").open("w", encoding="utf-8") as log:
-                    process = subprocess.Popen(args, cwd=root, stdin=source, stdout=log, stderr=log,
+                    process = external_popen(args, cwd=root, stdin=source, stdout=log, stderr=log,
                                                start_new_session=os.name != "nt",
                                                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
                     deadline = time.monotonic() + self.timeout
@@ -101,6 +104,9 @@ class CodexProvider:
                             time.sleep(.2)
                     finally:
                         terminate(process)
+            if startup_failure(process.returncode):
+                self._auth_until = 0
+                raise ProviderError("Codex 시작 실패 (0xc0000142): DLL 초기화 오류. 외부 도구 실행 경로를 확인하세요.")
             if process.returncode or not output.exists():
                 # Raw provider logs may contain credentials or source text; do not expose them.
                 detail = diagnose((root / "process.log").read_text(encoding="utf-8", errors="replace"))

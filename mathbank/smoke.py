@@ -14,6 +14,12 @@ def run(destination):
     from .output import page_html
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=True)
+    if os.name == 'nt':
+        from .processes import external_run
+        command = Path(os.environ['SystemRoot']) / 'System32' / 'cmd.exe'
+        external = external_run([str(command), '/d', '/c', 'echo', 'MATHBANK_EXTERNAL_OK'])
+        if external.returncode != 0 or 'MATHBANK_EXTERNAL_OK' not in external.stdout:
+            raise RuntimeError('Packaged external process initialization failed')
     app = QApplication([])
     temp = tempfile.TemporaryDirectory()
     window = MainWindow(Store(temp.name))

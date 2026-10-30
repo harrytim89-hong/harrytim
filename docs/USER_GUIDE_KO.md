@@ -1,4 +1,4 @@
-# MathBank Desktop 0.2.0 사용 안내
+# MathBank Desktop 0.2.1 사용 안내
 
 현재 개발판입니다. Windows EXE 포함 배포 폴더가 GitHub Actions에서 생성되고 자동 실행 검사를 통과했습니다.
 [Windows 빌드 목록](https://github.com/harrytim89-hong/harrytim/actions/workflows/windows-build.yml)에서
@@ -72,3 +72,5 @@ https://developers.openai.com/codex/cli 와 https://github.com/openai/codex 를 
 모델/추론 강도 지정, 최근 모델 표시·고정, 최대 2개 동시 처리, 독립 재판독 경량화,
 완료 페이지 재사용, 자료/문항/시험지/학생/배정 휴지통 및 복원 기능을 추가했습니다.
 자세한 설정과 업데이트 절차는 UPDATE_0_2_KO.md를 참고하세요.
+
+0.2.1에서 자동 큐 가동, 작업 중 보관함 자동/수동 새로고침, 외부 CLI DLL 경로 보완을 추가했습니다. UPDATE_0_2_1_KO.md를 참고하세요.

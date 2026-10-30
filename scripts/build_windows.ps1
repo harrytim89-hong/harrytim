@@ -24,6 +24,7 @@ if ($SmokeProcess.ExitCode -ne 0) { throw 'Packaged executable smoke test failed
 $SmokeResult = Get-Content (Join-Path $SmokeOutput 'result.json') -Raw -Encoding utf8 | ConvertFrom-Json
 if (-not $SmokeResult.pdf_saved -or -not $SmokeResult.render_ready) { throw 'Packaged rendering/PDF validation failed.' }
 Write-Output ('Packaged EXE smoke result: ' + ($SmokeResult | ConvertTo-Json -Compress))
+Copy-Item docs\UPDATE_0_2_1_KO.md dist\MathBankDesktop\UPDATE_0_2_1_KO.md
 Copy-Item docs\UPDATE_0_2_KO.md dist\MathBankDesktop\UPDATE_0_2_KO.md
 Copy-Item docs\USER_GUIDE_KO.md dist\MathBankDesktop\USER_GUIDE_KO.md
 Copy-Item docs\THIRD_PARTY.md dist\MathBankDesktop\THIRD_PARTY.md

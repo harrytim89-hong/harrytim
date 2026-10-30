@@ -191,8 +191,9 @@ class MainWindow(QMainWindow):
             self.provider.observed_model = observed[0].get("model", "")
         self.pipeline = Pipeline(self.store, self.provider, workers=settings.get("workers", 2))
         self.thread = None
+        self._auto_run = True
         self.signals = WorkerSignals()
-        self.signals.done.connect(self.refresh)
+        self.signals.done.connect(self.worker_finished)
         self.page = 0
         self.setWindowTitle("MathBank Desktop")
         self.resize(1280, 840)
@@ -205,7 +206,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.nav)
         right = QVBoxLayout()
         outer.addLayout(right)
-        brand = QLabel("MATHBANK  /  DESKTOP  0.2.0")
+        brand = QLabel("MATHBANK  /  DESKTOP  0.2.1")
         brand.setStyleSheet("font-size:24px;font-weight:700;color:#087e82;padding:16px")
         right.addWidget(brand)
         self.tabs = QTabWidget()
@@ -229,7 +230,7 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.statusBar().showMessage(f"운영 데이터: {self.store.root}")
         self.poll = QTimer(self)
-        self.poll.timeout.connect(self.refresh_jobs)
+        self.poll.timeout.connect(self.poll_work)
         self.poll.start(1500)
 
     def section(self, title, subtitle):
@@ -301,6 +302,7 @@ class MainWindow(QMainWindow):
 
     def process_pdf(self):
         document = self.selected(self.documents_table, self.documents)
+        self._auto_run = True
         self.pipeline.enqueue_document(document["id"])
         self.start_worker()
 
@@ -350,7 +352,7 @@ class MainWindow(QMainWindow):
 
     def build_bank(self):
         layout = self.section("문제 보관함", "한 페이지에 50문항을 표시합니다. 원문 검사와 정답·풀이 검사는 별도로 관리됩니다.")
-        row = self.row(layout, [("검색", self.search_bank), ("원본 · 편집", self.edit_question), ("재처리", self.retry_question), ("이전", self.previous_page), ("다음", self.next_page), ("문항 삭제", lambda: self.trash_selected("question", self.bank_table, self.questions))])
+        row = self.row(layout, [("새로고침", self.refresh_bank), ("검색", self.search_bank), ("원본 · 편집", self.edit_question), ("재처리", self.retry_question), ("이전", self.previous_page), ("다음", self.next_page), ("문항 삭제", lambda: self.trash_selected("question", self.bank_table, self.questions))])
         self.search = QLineEdit()
         self.search.setPlaceholderText("본문 · 단원 · 문항번호 검색")
         self.search.returnPressed.connect(self.search_bank)
@@ -358,6 +360,9 @@ class MainWindow(QMainWindow):
         self.only_exceptions = QCheckBox("처리 예외만")
         self.only_exceptions.stateChanged.connect(self.search_bank)
         row.addWidget(self.only_exceptions)
+        self.bank_auto = QCheckBox("자동 새로고침 (작업 중)")
+        self.bank_auto.setChecked(True)
+        layout.addWidget(self.bank_auto)
         self.bank_count = QLabel()
         layout.addWidget(self.bank_count)
         self.bank_table = self.table(layout, ["원본 번호", "본문", "단원", "난이도", "원문", "정답", "풀이"])
@@ -597,10 +602,11 @@ class MainWindow(QMainWindow):
 
     def build_jobs(self):
         layout = self.section("작업 큐 센터", "페이지·문항 단위 저장 · 최대 3가지 방법으로 재처리 · 인증/한도 오류 시 일시정지")
-        self.row(layout, [("대기 · 중단 작업 재개", self.resume_jobs), ("진행 작업 취소", self.pipeline.cancel.set), ("대기 작업 전체 취소", self.cancel_waiting), ("선택 예외 재시도", self.retry_job)])
+        self.row(layout, [("대기 · 중단 작업 재개", self.resume_jobs), ("진행 작업 취소", self.stop_processing), ("대기 작업 전체 취소", self.cancel_waiting), ("선택 예외 재시도", self.retry_job)])
         self.jobs_table = self.table(layout, ["작업", "대상", "상태", "시도", "방법", "사유"])
 
     def resume_jobs(self):
+        self._auto_run = True
         with self.store.connect() as db:
             db.execute("UPDATE jobs SET status='queued' WHERE status IN ('paused','cancelled')")
         self.start_worker()
@@ -609,13 +615,14 @@ class MainWindow(QMainWindow):
         job = self.selected(self.jobs_table, self.job_rows)
         if job["status"] not in ("exception", "paused", "cancelled"):
             raise ValueError("예외·중단 작업만 재시도할 수 있습니다.")
+        self._auto_run = True
         self.store.job_status(job["id"], "queued")
         self.start_worker()
 
     def build_settings(self):
         layout = self.section("AI · 백업 설정", "유료 API 자동 전환 없음. 기본 연결은 Codex CLI의 ChatGPT 로그인입니다.")
         self.ai_enabled = QCheckBox("Codex 구독 연결 사용 (현재 세션)")
-        self.ai_enabled.toggled.connect(lambda enabled: setattr(self.provider, 'enabled', enabled))
+        self.ai_enabled.toggled.connect(self.set_ai_enabled)
         layout.addWidget(self.ai_enabled)
         form = QFormLayout()
         self.model_field = QLineEdit(self.provider.model)
@@ -758,10 +765,47 @@ class MainWindow(QMainWindow):
                 self.start_worker()
 
     def refresh_bank(self):
+        selected_ids = {self.questions[i.row()]['id'] for i in self.bank_table.selectionModel().selectedRows()
+                        if hasattr(self, 'questions') and i.row() < len(self.questions)}
+        scroll = self.bank_table.verticalScrollBar().value()
         self.questions, self.bank_total = self.store.questions(self.page, self.search.text(), exceptions=self.only_exceptions.isChecked())
         self.bank_count.setText(f"전체 {self.bank_total}문항 · {self.page+1}페이지")
         self.fill(self.bank_table, [(q["number"], q["content"].get("text", "미처리")[:70], q["content"].get("unit", "—"),
             q["content"].get("level", "—"), q["stages"]["comparison"]["state"], q["stages"]["answer"]["state"], q["stages"]["solution"]["state"]) for q in self.questions])
+
+        from PySide6.QtCore import QItemSelectionModel
+        self.bank_table.clearSelection()
+        for row, q in enumerate(self.questions):
+            if q['id'] in selected_ids:
+                self.bank_table.selectionModel().select(self.bank_table.model().index(row, 0),
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        self.bank_table.verticalScrollBar().setValue(scroll)
+        from datetime import datetime
+        self.bank_count.setText(self.bank_count.text() + " · 갱신 " + datetime.now().strftime('%H:%M:%S'))
+
+    def set_ai_enabled(self, enabled):
+        self.provider.enabled = enabled
+        if enabled:
+            self._auto_run = True
+        else:
+            self.stop_processing()
+
+    def stop_processing(self):
+        self._auto_run = False
+        self.pipeline.cancel.set()
+
+    def worker_finished(self):
+        if self.pipeline.cancel.is_set():
+            self._auto_run = False
+        self.refresh()
+
+    def poll_work(self):
+        self.refresh_jobs()
+        active = bool(self.thread and self.thread.is_alive())
+        if active and self.bank_auto.isChecked() and self.tabs.currentIndex() == 1:
+            self.refresh_bank()
+        if not active and self._auto_run and self.provider.enabled and self.store.next_job():
+            self.start_worker()
 
     def refresh_jobs(self):
         if hasattr(self, "model_status"):
