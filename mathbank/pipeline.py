@@ -24,9 +24,9 @@ Do not invent illegible content. Return {"text": string, "choices": [string],
 "diagram": [objects], "answer": string, "solution": [step strings], "course": string,
 "unit": string, "level": integer 1..5, "reason": string, "uncertain": boolean}.
 Use $LaTeX$ for math. Korean prose. Separate choices from text. No question numbering in text.
-Diagram coordinates are 0..1000; types: line(x1,y1,x2,y2), circle(cx,cy,r),
-text(x,y,label), polyline(points:[[x,y],...]). Preserve only observed relations.
-If a diagram cannot be reconstructed faithfully set uncertain=true; never omit a visible diagram.
+The original source image is preserved verbatim for printed questions, including all diagrams.
+Return diagram=[]; do not generate drawing coordinates. Read and use every observed diagram
+relation in the solution. If those relations are unclear, set uncertain=true.
 Solve step by step only within the given course. Lv1 direct formula, Lv2 familiar method,
 Lv3 reorganizing conditions, Lv4 decisive nonstandard observation, Lv5 further deep reasoning.
 If unreadable, uncertain=true. Do not fabricate an answer.'''
@@ -191,6 +191,9 @@ be included without ambiguity, kind=uncertain; do not silently truncate.''', [im
                 try:
                     candidate, independent = self.readings(q, document, method, images)
                     validate_content(candidate)
+                    if not q['user_modified']:
+                        candidate['source_preserved'] = True
+                        candidate['diagram'] = []
                     if candidate.get("uncertain", True):
                         raise ValueError("원문 판독 또는 도형 재작성 불확실")
                     mark(stages, "transcription", "passed", q["version"])
@@ -202,10 +205,12 @@ be included without ambiguity, kind=uncertain; do not silently truncate.''', [im
                         raise ValueError("; ".join(issues))
                     review = self.provider.call('''Independently check this candidate against the ORIGINAL IMAGE.
 Check conditions, signs, exponents, all choices, diagram relations, answer and every solution step.
+For source_preserved=true the original image itself will be printed. diagram_ok means the
+solution interprets its diagram relations correctly; no recreated geometry is required.
 Check course restrictions. Return {"source_ok":boolean,"diagram_ok":boolean,"answer_ok":boolean,
 "solution_ok":boolean,"course_ok":boolean,"reasons":[string]}. Do not approve uncertain results.
 Candidate: ''' + json.dumps({k: v for k, v in candidate.items() if k in (
-                        'text', 'choices', 'diagram', 'answer', 'solution', 'course', 'unit', 'level', 'reason', 'uncertain')},
+                        'text', 'choices', 'diagram', 'answer', 'solution', 'course', 'unit', 'level', 'reason', 'uncertain', 'source_preserved')},
                         ensure_ascii=False, separators=(',', ':')) + '\nRequired course: ' + document['course'], images, self.cancel)
                     for field in ("source_ok", "diagram_ok", "answer_ok", "solution_ok", "course_ok"):
                         if type(review.get(field)) is not bool:

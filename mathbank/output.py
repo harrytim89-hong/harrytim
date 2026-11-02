@@ -3,6 +3,9 @@ import html
 import json
 from pathlib import Path
 import re
+import base64
+import io
+import tempfile
 from .validation import printable, validate_content, validate_diagram
 
 ASSETS = Path(__file__).parent / "assets"
@@ -55,7 +58,7 @@ await document.fonts.ready; await Promise.all(Array.from(document.images).map(i=
 window.renderReady=true;}catch(e){window.renderError=String(e);}});</script></body></html>'''
 
 
-def make_exam(store, ids, title, mode="complete", points=5, layout="one"):
+def make_exam(store, ids, title, mode="complete", points=5, layout="one", source_mode=False):
     if not ids or len(ids) != len(set(ids)):
         raise ValueError("중복 없이 문항을 선택하세요.")
     if points <= 0 or layout not in ("one", "two", "grid"):
@@ -64,6 +67,12 @@ def make_exam(store, ids, title, mode="complete", points=5, layout="one"):
     blocked = [q for q in questions if not printable(q)]
     if blocked and mode != "draft":
         raise ValueError("출력 예외: " + ", ".join(f'{q["number"] or q["id"][:8]} ({q["error"] or "자동 검사 미완료"})' for q in blocked))
+    for q in questions:
+        if source_mode or q['content'].get('source_preserved'):
+            from .pipeline import crop
+            with tempfile.TemporaryDirectory() as directory:
+                q['source_images'] = [base64.b64encode(p.read_bytes()).decode('ascii')
+                                      for p in crop(store, q, directory, dpi=260)]
     return store.put_record("exam", {"title": title, "questions": questions, "points": [points] * len(ids),
                                      "layout": layout, "draft": mode == "draft"})
 
@@ -87,6 +96,11 @@ def exam_html(exam, kind="questions"):
         if not valid:
             body += f'<p class="warning">처리 예외: {text_html(q["error"] or "자동 검사 미완료")}</p>'
         if kind == "questions":
+            if q.get('source_images'):
+                body += ''.join('<img alt="원본 문항" style="display:block;max-width:100%;height:auto" src="data:image/png;base64,' +
+                                base64.b64encode(base64.b64decode(s, validate=True)).decode('ascii') + '">' for s in q['source_images'])
+                body += '<div class="blank"></div></section>'
+                continue
             body += '<p>' + text_html(c.get("text", "본문 미처리")) + '</p>'
             body += svg(c.get("diagram", []))
             body += '<div class="choices">' + '<br>'.join(f'{n}. {text_html(t)}' for n, t in enumerate(c.get("choices", []), 1)) + '</div><div class="blank"></div>'
@@ -115,11 +129,15 @@ def export_docx(exam, destination):
         if not printable(q) and not exam.get("draft"):
             raise ValueError(f"{i}번: 원문 자동 검사 미완료")
         c = q["content"]
-        if c.get("diagram"):
+        if c.get("diagram") and not q.get('source_images'):
             raise ValueError(f"{i}번: DOCX 벡터 도형 내보내기 미지원. PDF로 출력하세요. 도형을 누락한 파일은 저장하지 않습니다.")
         document.add_heading(f'{i:02d}  [{exam["points"][i-1]}점]', 2)
         if not printable(q):
             document.add_paragraph("처리 예외: " + (q["error"] or "자동 검사 미완료"))
+        if q.get('source_images'):
+            for encoded in q['source_images']:
+                document.add_picture(io.BytesIO(base64.b64decode(encoded, validate=True)), width=Mm(160))
+            continue
         for text in [c.get("text", "본문 미처리"), *[f"{n}. {t}" for n, t in enumerate(c.get("choices", []), 1)]]:
             paragraph = document.add_paragraph()
             for part in re.split(r'(\$\$.*?\$\$|\$[^$]+\$)', text, flags=re.S):

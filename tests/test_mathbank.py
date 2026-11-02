@@ -525,3 +525,51 @@ def test_restore_cancelled_includes_beyond_visible_300_rows(bank):
     store.cancel_jobs()
     assert len(store.jobs()) == 300
     assert store.restore_cancelled_jobs() == 305
+
+
+def test_original_source_snapshot_preserves_graph_and_survives_source_removal(bank, tmp_path):
+    import base64
+    from mathbank.pipeline import crop
+    store, doc, qid = bank
+    passed(store, qid, dict(content(), diagram=[dict(type='line', x1=0,y1=0,x2=1000,y2=1000)]))
+    q = store.question(qid)
+    images = crop(store, q, tmp_path, dpi=260)
+    original = images[0].read_bytes()
+    exam = store.record(make_exam(store, [qid], '원본', source_mode=True))
+    assert base64.b64decode(exam['questions'][0]['source_images'][0]) == original
+    (store.root / store.document(doc)['path']).unlink()
+    html = exam_html(exam)
+    assert 'data:image/png;base64,' in html and '<svg' not in html
+    path = tmp_path / 'source.docx'
+    export_docx(exam, path)
+    with zipfile.ZipFile(path) as z:
+        assert z.read('word/media/image1.png') == original
+
+
+def test_source_mode_rejects_tampered_pdf(bank):
+    store, doc, qid = bank
+    passed(store, qid)
+    (store.root / store.document(doc)['path']).write_bytes(b'changed')
+    with pytest.raises(ValueError, match='해시'):
+        make_exam(store, [qid], '원본', source_mode=True)
+
+
+def test_new_processing_preserves_source_and_still_solves(bank):
+    store, _, qid = bank
+    provider = ScriptedProvider([content(), content(), REVIEW])
+    store.enqueue('question', qid, 1)
+    Pipeline(store, provider).run()
+    q = store.question(qid)
+    assert q['content']['source_preserved'] is True
+    assert printable(q, 'solutions')
+    assert store.record(make_exam(store, [qid], '원본'))['questions'][0]['source_images']
+    assert 'source_preserved' in provider.calls[2][0]
+
+
+def test_safe_latex_style_difference_does_not_trigger_retry():
+    first = content(r'$\left(\dfrac{1}{x}\right)$')
+    second = content(r'$(\frac{1}{x})$')
+    assert compare_readings(first, second) == []
+    assert compare_readings(first, content(r'$(\frac{1}{x+1})$'))
+    assert compare_readings(content('$x<1$'), content('$x>1$'))
+    assert compare_readings(content('$x^2$'), content('$x_2$'))

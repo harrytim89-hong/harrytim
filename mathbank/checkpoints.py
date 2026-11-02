@@ -23,6 +23,7 @@ class Checkpoints:
         provider = self.provider
         identity = dict(revision=1, question=q['id'], version=q['version'],
                         role=role, prompt=prompt,
+                        local_model=getattr(provider, 'local_model', ''),
                         images=[hashlib.sha256(p.read_bytes()).hexdigest() for p in images],
                         model=getattr(provider, 'model', '') or getattr(provider, 'observed_model', ''),
                         effort=getattr(provider, 'effort', ''),

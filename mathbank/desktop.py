@@ -188,6 +188,7 @@ class MainWindow(QMainWindow):
         self.provider = CodexProvider(model=settings.get("model", ""), effort=settings.get("effort", ""),
                                       reading_effort=settings.get("reading_effort", ""), store=self.store)
         observed = self.store.records("ai_observed")
+        self.provider.local_model = settings.get('local_model', '')
         if observed:
             self.provider.observed_model = observed[0].get("model", "")
         self.pipeline = Pipeline(self.store, self.provider, workers=settings.get("workers", 2),
@@ -484,7 +485,11 @@ class MainWindow(QMainWindow):
                     self.store.enqueue("question", q["id"], q["version"])
                 self.start_worker()
                 return
-        make_exam(self.store, ids, title.strip(), mode, points, layout)
+        source_mode, ok = QInputDialog.getItem(self, "문항 표시", "원본 모드는 스캔의 도형·본문·기존 번호를 그대로 보존합니다. 편집 내용은 재작성 모드에 반영됩니다.",
+            ["원본 스캔 보존 (권장)", "편집·재작성 내용 (원본 보존 문항 제외)"], 0, False)
+        if not ok:
+            return
+        make_exam(self.store, ids, title.strip(), mode, points, layout, source_mode=source_mode.startswith("원본"))
         self.refresh()
 
     def preview_exam(self, kind):
@@ -496,7 +501,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "DOCX 저장", "MathBank.docx", "Word (*.docx)")
         if path:
             export_docx(exam, path)
-            QMessageBox.information(self, "저장 완료", "Word 수식 객체로 저장했습니다. 한글 호환성은 별도 검증이 필요합니다.")
+            QMessageBox.information(self, "저장 완료", "Word 문서로 저장했습니다. 원본 보존 문항은 이미지로 포함됩니다. 한글 호환성은 별도 검증이 필요합니다.")
 
     def build_students(self):
         layout = self.section("학생 · 채점 · 성적표", "미채점과 오답을 구분합니다. 성적표는 저장 당시 시험지와 채점 결과를 보존합니다.")
@@ -664,6 +669,13 @@ class MainWindow(QMainWindow):
         self.reading_effort_field.addItems(["기존 강도 유지", "medium", "low"])
         self.reading_effort_field.setCurrentText(self.provider.reading_effort or "기존 강도 유지")
         form.addRow("독립 판독 강도 (풀이·검토 제외)", self.reading_effort_field)
+        self.local_model_field = QLineEdit(self.provider.local_model)
+        self.local_model_field.setPlaceholderText("선택: 설치된 Ollama 비전 모델 이름 · 비우면 Codex")
+        form.addRow("로컬 독립 판독 (실험 기능)", self.local_model_field)
+        local_note = QLabel("Ollama를 별도 설치하고 비전 모델을 준비해야 합니다. 독립 판독만 PC에서 실행하며 풀이·검토는 Codex를 사용합니다.\n"
+                            "RTX 4060 실제 성능 미검증. 모델 초기 로딩은 먼저 완료하세요. 응답·취소 대기는 최대 약 30초입니다.")
+        local_note.setWordWrap(True)
+        form.addRow(local_note)
         self.parallel_reads_field = QCheckBox("풀이·독립 판독 동시 실행 (불확실한 문항은 호출이 늘 수 있음)")
         self.parallel_reads_field.setChecked(self.pipeline.parallel_reads)
         form.addRow(self.parallel_reads_field)
@@ -696,16 +708,20 @@ class MainWindow(QMainWindow):
         self.idle_required()
         import re
         model = self.model_field.text().strip()
+        local_model = self.local_model_field.text().strip()
+        if local_model and not re.fullmatch(r'[a-zA-Z0-9._:/-]{1,100}', local_model):
+            raise ValueError('로컬 모델 이름 형식을 확인하세요.')
         if model and not re.fullmatch(r'[a-zA-Z0-9._:/-]{1,100}', model):
             raise ValueError("모델 ID 형식을 확인하세요.")
         self.provider.model = model
+        self.provider.local_model = local_model
         self.provider.effort = "" if self.effort_field.currentIndex() == 0 else self.effort_field.currentText()
         self.provider.reading_effort = "" if self.reading_effort_field.currentIndex() == 0 else self.reading_effort_field.currentText()
         self.pipeline.parallel_reads = self.parallel_reads_field.isChecked()
         self.pipeline.workers = self.worker_field.value()
         self.store.put_record("ai_settings", {"model": model, "effort": self.provider.effort,
                               "workers": self.pipeline.workers, "reading_effort": self.provider.reading_effort,
-                              "parallel_reads": self.pipeline.parallel_reads}, "ai-settings")
+                              "parallel_reads": self.pipeline.parallel_reads, "local_model": local_model}, "ai-settings")
         self.refresh_jobs()
         self.statusBar().showMessage("AI 설정 저장 완료. 다음 요청부터 적용합니다. 모델 자동 대체는 하지 않습니다.")
 

@@ -63,11 +63,20 @@ def validate_diagram(objects):
                     raise ValueError("곡선 좌표 범위 오류")
 
 
+def canonical_reading(text):
+    # Only display-style commands inside math. Never simplify expressions or prose.
+    def math(match):
+        value = re.sub(r'\\(?:dfrac|tfrac)\b', r'\\frac', match.group())
+        return re.sub(r'\\(?:left|right)\b', '', value)
+    return re.sub(r'\$[^$]*\$', math, text)
+
+
 def compare_readings(first, second):
     issues = []
     for key in ("text", "choices"):
         a = first[key] if key == "text" else "\n".join(first[key])
         b = second[key] if key == "text" else "\n".join(second[key])
+        a, b = canonical_reading(a), canonical_reading(b)
         if math_tokens(a) != math_tokens(b):
             issues.append(f"{key}: 숫자·부호 불일치")
         if re.sub(r"\s", "", a) != re.sub(r"\s", "", b):

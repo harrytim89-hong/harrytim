@@ -37,6 +37,7 @@ def import_response(store, path):
     if q["user_modified"]:
         raise ValueError("사용자 수정값이 있습니다. 가져오기로 덮어쓰지 않습니다.")
     content = validate_content(result["content"])
+    content['source_preserved'] = True
     stages = initial_stages()
     for value in stages.values():
         value["version"] = q["version"]

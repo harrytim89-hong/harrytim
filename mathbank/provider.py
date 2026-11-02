@@ -39,6 +39,8 @@ class CodexProvider:
         self._auth_lock = threading.Lock()
         self.reading_effort = reading_effort
         self._slots = threading.BoundedSemaphore(2)
+        self.local_model = ''
+        self._local_lock = threading.Lock()
 
     def set_concurrency(self, limit):
         # Called only before a pipeline run, when there are no active requests.
@@ -74,6 +76,15 @@ class CodexProvider:
             raise Cancelled("사용자가 작업을 취소했습니다.")
         if not self.enabled:
             raise ProviderError("AI 연결이 꺼져 있습니다. 설정에서 구독 연결을 켜거나 요청 패키지를 내보내세요.")
+        if purpose == 'reading' and self.local_model:
+            from .local_reader import read
+            while not self._local_lock.acquire(timeout=.1):
+                if cancel and cancel.is_set():
+                    raise Cancelled('사용자가 작업을 취소했습니다.')
+            try:
+                return read(self.local_model, prompt, images, cancel, self.store)
+            finally:
+                self._local_lock.release()
         with self._auth_lock:
             if time.monotonic() >= self._auth_until:
                 ready, message = self.status()
