@@ -1,51 +1,40 @@
-name: Windows build
+name: MathBank 0.3.1 Windows download
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths:
-      - 'mathbank/**'
-      - 'scripts/**'
-      - 'tests/**'
-      - 'launch_mathbank.py'
-      - 'requirements.lock'
-      - 'docs/USER_GUIDE_KO.md'
-      - 'docs/THIRD_PARTY.md'
-      - '.github/workflows/windows-build.yml'
+    branches: [codex/mathbank-0-3-1-download]
+permissions:
+  contents: write
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
       PYTHONUTF8: '1'
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           architecture: x64
-      - name: Build and unit tests
+      - name: Test, build and verify packaged Windows program
         shell: pwsh
-        run: |
-          try {
-            & ./scripts/build_windows.ps1 *>&1 | Tee-Object -FilePath build.log
-          } catch {
-            $Diagnostic = if (Test-Path build.log) { (Get-Content build.log -Tail 65) -join "`n" } else { $_.ToString() }
-            $Diagnostic = $Diagnostic.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Output "::error title=Windows build diagnostics::$Diagnostic"
-            throw
-          } finally {
-            if (Test-Path build.log) {
-              '## Windows build diagnostic output' | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-              '```text' | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-              Get-Content build.log -Tail 100 | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-              '```' | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-            }
-          }
+        run: ./scripts/build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: MathBankDesktop-Windows-x64
+          name: MathBankDesktop-0.3.1-Windows-x64
           path: dist/MathBankDesktop/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+      - name: Publish a direct download after all Windows checks pass
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ReleaseTag = 'mathbank-v0.3.1'
+          $Archive = 'dist/MathBankDesktop-Windows-x64.zip'
+          $Hash = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
+          "$Hash  MathBankDesktop-Windows-x64.zip" | Out-File dist/SHA256SUMS.txt -Encoding ascii
+          gh release create $ReleaseTag $Archive dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title 'MathBank Desktop 0.3.1' --notes-file docs/RELEASE_NOTES_KO.md
+          if ($LASTEXITCODE -ne 0) { throw 'Direct-download release creation failed.' }

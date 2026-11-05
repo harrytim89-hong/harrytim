@@ -76,6 +76,13 @@ def compare_readings(first, second):
 
 
 def printable(question, kind="questions"):
+    if question.get('content', {}).get('format') == 'structured-v2':
+        from .solver import fingerprint
+        content = question['content']
+        proof = content.get('verification', {})
+        if (content.get('input_status') != 'complete' or content.get('verification_status') != 'passed' or proof.get('state') != 'passed'
+                or proof.get('version') != question['version'] or proof.get('fingerprint') != fingerprint(content)):
+            return False
     required = ["segmentation", "transcription", "diagram", "comparison"]
     if kind != "questions":
         required.append("answer")
@@ -91,7 +98,7 @@ def invalidate_changes(old, new, stages, version):
     result = copy.deepcopy(stages)
     changed = {key for key in set(old) | set(new) if old.get(key) != new.get(key)}
     invalid = set()
-    if changed & {'text', 'choices', 'diagram'}:
+    if changed & {'text', 'choices', 'diagram', 'blocks', 'choice_blocks'}:
         invalid.update({'transcription', 'diagram', 'comparison', 'answer', 'solution', 'classification'})
     if 'answer' in changed:
         invalid.update({'answer', 'solution'})

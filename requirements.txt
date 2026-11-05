@@ -3,3 +3,7 @@ PyMuPDF==1.25.5
 python-docx==1.1.2
 latex2mathml==3.77.0
 mathml2omml==0.0.2
+sympy==1.14.0
+typst==0.14.7
+defusedxml==0.7.1
+python-hwpx==6.11.0

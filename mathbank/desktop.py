@@ -24,6 +24,7 @@ from .provider import CodexProvider
 from .pipeline import Pipeline, crop
 from .validation import initial_stages, validate_content, printable, invalidate_changes
 from .output import ASSETS, exam_html, export_docx, make_exam, grade_report, report_html, page_html, text_html, svg
+from .hwpx_ui import HwpxUi, LABELS
 
 
 class LocalOnly(QWebEngineUrlRequestInterceptor):
@@ -179,7 +180,7 @@ class WorkerSignals(QObject):
     done = Signal()
 
 
-class MainWindow(QMainWindow):
+class MainWindow(HwpxUi, QMainWindow):
     def __init__(self, store=None):
         super().__init__()
         self.store = store or Store()
@@ -203,11 +204,11 @@ class MainWindow(QMainWindow):
         outer = QHBoxLayout(root)
         self.nav = QListWidget()
         self.nav.setFixedWidth(210)
-        self.nav.addItems(["01  PDF 자료실", "02  문제 보관함", "03  시험지 · 과제", "04  학생 · 성적표", "05  작업 큐", "06  AI · 백업 설정"])
+        self.nav.addItems(["01  자료실 · HWPX", "02  문항검색", "03  시험 · 과제", "04  학생 · 성적표", "05  작업 큐", "06  AI · 백업 설정", "07  변형 · 정답 생성"])
         outer.addWidget(self.nav)
         right = QVBoxLayout()
         outer.addLayout(right)
-        brand = QLabel("MATHBANK  /  DESKTOP  0.2.3")
+        brand = QLabel("MATHBANK  /  DESKTOP  0.3.1")
         brand.setStyleSheet("font-size:24px;font-weight:700;color:#087e82;padding:16px")
         right.addWidget(brand)
         self.tabs = QTabWidget()
@@ -226,6 +227,7 @@ class MainWindow(QMainWindow):
         self.build_students()
         self.build_jobs()
         self.build_settings()
+        self.build_generation()
         with self.store.connect() as db:
             db.execute("UPDATE jobs SET status='paused',error='앱 중단 후 재개 대기' WHERE status='running'")
         self.refresh()
@@ -285,9 +287,10 @@ class MainWindow(QMainWindow):
         return data[index]
 
     def build_library(self):
-        layout = self.section("PDF 자료실", "PDF를 등록한 뒤 자동 처리 시작을 누르세요. 완료 문항은 승인 없이 보관함에 저장됩니다.")
-        self.row(layout, [("PDF 등록", self.add_pdf), ("자동 처리 시작", self.process_pdf), ("영역 직접 추가", self.add_region), ("자료 삭제", lambda: self.trash_selected("document", self.documents_table, self.documents))])
-        self.documents_table = self.table(layout, ["자료명", "과정", "페이지", "등록일"])
+        layout = self.section("자료실 · HWPX", "문제 HWPX만으로 가져오기·문항 DB화·분류가 가능합니다. 정답·해설 생성은 별도 실행합니다.")
+        self.row(layout, [("HWP / HWPX 가져오기", self.add_hwpx), ("가져오기 결과", self.import_details), ("빠른정답 CSV 연결", self.add_quick_answers), ("답지 양식", self.quick_answer_template)])
+        self.row(layout, [("기존 PDF 등록", self.add_pdf), ("PDF AI 판독", self.process_pdf), ("PDF 영역 추가", self.add_region), ("자료 삭제", lambda: self.trash_selected("document", self.documents_table, self.documents))])
+        self.documents_table = self.table(layout, ["자료명", "과정", "구역/페이지", "등록일"])
 
     def add_pdf(self):
         path, _ = QFileDialog.getOpenFileName(self, "PDF 등록", "", "PDF (*.pdf)")
@@ -310,9 +313,12 @@ class MainWindow(QMainWindow):
     def start_worker(self):
         if self.thread and self.thread.is_alive():
             return
-        if not self.provider.enabled:
+        next_job = self.store.next_job()
+        needs_ai = next_job and next_job['kind'] not in ('local_solve','variant_local_numeric','variant_local_thinking')
+        if not self.provider.enabled and needs_ai:
             raise ValueError("작업은 큐에 저장되었습니다. AI · 백업 설정에서 구독 연결을 켜고 작업 큐에서 재개하세요.")
         self._worker_error = ""
+        self._activity = ''
         def work():
             try:
                 self.pipeline.run()
@@ -328,6 +334,8 @@ class MainWindow(QMainWindow):
     def add_region(self):
         import pymupdf
         document = self.selected(self.documents_table, self.documents)
+        if document['path'].endswith('.hwpx'):
+            raise ValueError('HWPX는 문서 구조로 가져옵니다. PDF를 선택하세요.')
         number, ok = QInputDialog.getInt(self, "페이지 선택", "페이지", 1, 1, document["pages"])
         if not ok:
             return
@@ -370,7 +378,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.bank_auto)
         self.bank_count = QLabel()
         layout.addWidget(self.bank_count)
-        self.bank_table = self.table(layout, ["원본 번호", "본문", "단원", "난이도", "원문", "정답", "풀이"])
+        self.row(layout, [('HWPX 문항 나누기', self.split_hwpx), ('선택 HWPX 문항 합치기', self.merge_hwpx)])
+        self.bank_table = self.table(layout, ["원본 번호", "본문", "단원", "난이도", "입력/저장", "정답", "풀이", "수학 검증"])
         self.bank_table.doubleClicked.connect(lambda _: self.guard(self.edit_question))
 
     def search_bank(self):
@@ -388,11 +397,17 @@ class MainWindow(QMainWindow):
 
     def retry_question(self):
         q = self.selected(self.bank_table, self.questions)
+        if q['content'].get('format') == 'structured-v2':
+            self.store.enqueue('local_solve', q['id'], q['version'])
+            self.start_worker()
+            return
         self.store.enqueue("question", q["id"], q["version"])
         self.start_worker()
 
     def edit_question(self):
         q = self.store.question(self.selected(self.bank_table, self.questions)["id"])
+        if q['content'].get('format') == 'structured-v2':
+            return self.edit_hwpx(q)
         dialog = QDialog(self)
         dialog.setWindowTitle("원본 대조 · 선택적 편집")
         dialog.resize(1150, 800)
@@ -451,6 +466,7 @@ class MainWindow(QMainWindow):
         layout = self.section("시험지 · 과제 제작", "선택 문항의 내용·정답·분류를 스냅샷으로 저장합니다. 원문 검사 예외는 초안에 명시합니다.")
         self.row(layout, [("보관함 선택 문항으로 만들기", self.create_exam), ("문제지", lambda: self.preview_exam("questions")),
                           ("빠른답", lambda: self.preview_exam("answers")), ("상세 해설", lambda: self.preview_exam("solutions")), ("DOCX 저장", self.save_docx), ("시험지 삭제", lambda: self.trash_selected("exam", self.exam_table, self.exams))])
+        self.row(layout, [("Typst PDF 저장", lambda: self.publish('pdf')), ("편집용 HWPX 저장", lambda: self.publish('hwpx')), ("출력 설정 · 새 개정", self.exam_settings)])
         self.exam_table = self.table(layout, ["제목", "문항 수", "출력 상태"])
 
     def create_exam(self):
@@ -499,20 +515,22 @@ class MainWindow(QMainWindow):
     def build_students(self):
         layout = self.section("학생 · 채점 · 성적표", "미채점과 오답을 구분합니다. 성적표는 저장 당시 시험지와 채점 결과를 보존합니다.")
         self.row(layout, [("학생 등록", self.add_student), ("선택 시험 배정", self.assign_exam), ("채점 · 성적표 작성", self.grade), ("저장 성적표 보기", self.show_report), ("오답 보완 문항 찾기", self.clinic)])
-        self.row(layout, [("학생 삭제", lambda: self.trash_selected("student", self.student_table, self.students)), ("배정 취소 · 삭제", lambda: self.trash_selected("assignment", self.assignment_table, self.assignments))])
+        self.row(layout, [("학생 정보 수정", lambda: self.add_student(self.selected(self.student_table, self.students))), ("학생 삭제", lambda: self.trash_selected("student", self.student_table, self.students)), ("배정 취소 · 삭제", lambda: self.trash_selected("assignment", self.assignment_table, self.assignments))])
         self.student_table = self.table(layout, ["학생", "반", "학교급", "학년"])
         self.assignment_table = self.table(layout, ["학생", "시험지", "제출일", "상태"])
+        self.build_attempts(layout)
 
-    def add_student(self):
+    def add_student(self, existing=None):
         dialog = QDialog(self)
         dialog.setWindowTitle("학생 등록")
         form = QFormLayout(dialog)
         fields = {}
-        for key, title in (("name", "이름"), ("class", "반"), ("grade", "학년"), ("memo", "교사 메모")):
-            fields[key] = QLineEdit()
+        for key, title in (("name", "이름"), ("class", "반"), ("school_name", "학교명"), ("grade", "학년"), ("memo", "교사 메모")):
+            fields[key] = QLineEdit((existing or {}).get(key, ''))
             form.addRow(title, fields[key])
         school = QComboBox()
         school.addItems(["중등", "고등"])
+        school.setCurrentText((existing or {}).get('school', '중등'))
         form.addRow("학교급", school)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -523,7 +541,8 @@ class MainWindow(QMainWindow):
             if not result["name"]:
                 raise ValueError("학생 이름을 입력하세요.")
             result["school"] = school.currentText()
-            self.store.put_record("student", result)
+            from .study import save_student
+            save_student(self.store, result, (existing or {}).get('id'))
             self.refresh()
 
     def assign_exam(self):
@@ -619,8 +638,11 @@ class MainWindow(QMainWindow):
                 raise ValueError("이전 작업을 종료하는 중입니다. 종료 후 다시 시작해 주세요.")
             return
         # Starting the queue is an explicit request to use the subscription connection.
-        self.ai_enabled.setChecked(True)
-        self.provider.enabled = True
+        with self.store.connect() as db:
+            needs_ai = db.execute("SELECT 1 FROM jobs WHERE status IN ('queued','paused') AND kind NOT IN ('local_solve','variant_local_numeric','variant_local_thinking') LIMIT 1").fetchone()
+        if needs_ai:
+            self.ai_enabled.setChecked(True)
+            self.provider.enabled = True
         self._auto_run = True
         self._worker_error = ""
         self.pipeline.cancel.clear()
@@ -660,7 +682,7 @@ class MainWindow(QMainWindow):
         self.ai_status = QLabel("연결 진단 전")
         self.ai_status.setWordWrap(True)
         layout.addWidget(self.ai_status)
-        self.row(layout, [("연결 진단", self.check_ai), ("백업 ZIP 저장", self.backup), ("새 폴더로 복원", self.restore_backup), ("문항 요청 패키지 내보내기", self.export_request), ("결과 JSON 가져오기", self.import_response)])
+        self.row(layout, [("로그인 진단", self.check_ai), ("실제 AI 연결 시험", self.live_ai_test), ("백업 ZIP 저장", self.backup), ("새 폴더로 복원", self.restore_backup), ("문항 요청 패키지 내보내기", self.export_request), ("결과 JSON 가져오기", self.import_response)])
         note = QLabel("Codex 설치·로그인은 공식 안내를 따르세요: https://developers.openai.com/codex/cli\n"
                       "운영 데이터: " + str(self.store.root) + "\n"
                       "복원은 새 폴더에서 무결성을 검사합니다. 현재 운영 데이터를 덮어쓰지 않습니다.\n"
@@ -787,8 +809,12 @@ class MainWindow(QMainWindow):
         scroll = self.bank_table.verticalScrollBar().value()
         self.questions, self.bank_total = self.store.questions(self.page, self.search.text(), exceptions=self.only_exceptions.isChecked())
         self.bank_count.setText(f"전체 {self.bank_total}문항 · {self.page+1}페이지")
-        self.fill(self.bank_table, [(q["number"], q["content"].get("text", "미처리")[:70], q["content"].get("unit", "—"),
-            q["content"].get("level", "—"), q["stages"]["comparison"]["state"], q["stages"]["answer"]["state"], q["stages"]["solution"]["state"]) for q in self.questions])
+        self.fill(self.bank_table, [(q['number'], q['content'].get('text', '미처리')[:70], q['content'].get('unit', '—'),
+            str(q['content'].get('difficulty', q['content'].get('level', '—'))) + ('/10' if 'difficulty' in q['content'] else '/5'),
+            LABELS.get(q['content'].get('input_status'), q['stages']['comparison']['state']),
+            LABELS.get(q['content'].get('answer_status'), q['stages']['answer']['state']),
+            LABELS.get(q['content'].get('solution_status'), q['stages']['solution']['state']),
+            LABELS.get(q['content'].get('verification_status'), '이전 검사 체계')) for q in self.questions])
 
         from PySide6.QtCore import QItemSelectionModel
         self.bank_table.clearSelection()
@@ -818,16 +844,26 @@ class MainWindow(QMainWindow):
         if self.pipeline.cancel.is_set():
             self._auto_run = False
         self.refresh()
+        if self._worker_error:
+            self.statusBar().showMessage('작업 실패: ' + self._worker_error)
+            QMessageBox.warning(self, '작업 실패', self._worker_error)
+        else:
+            notice = self.store.records('import_notice')
+            if notice: self.statusBar().showMessage(notice[0]['message'])
 
     def poll_work(self):
         self.refresh_jobs()
         active = bool(self.thread and self.thread.is_alive())
+        if active and getattr(self, '_activity', ''):
+            self.statusBar().showMessage(self._activity)
         if active and self.bank_auto.isChecked() and self.tabs.currentIndex() == 1:
             self.refresh_bank()
         if not active and self.pipeline.cancel.is_set():
             self._auto_run = False
-        if not active and self._auto_run and self.provider.enabled and self.store.next_job():
-            self.start_worker()
+        if not active and self._auto_run and self.store.next_job():
+            job = self.store.next_job()
+            if self.provider.enabled or job['kind'] in ('local_solve','variant_local_numeric','variant_local_thinking'):
+                self.start_worker()
 
     def refresh_jobs(self):
         if hasattr(self, "model_status"):
@@ -865,6 +901,7 @@ class MainWindow(QMainWindow):
         self.assignments = self.store.records("assignment")
         self.fill(self.assignment_table, [(a["student"]["name"], a["exam"]["title"], a["deadline"], a["status"]) for a in self.assignments])
         self.refresh_jobs()
+        self.refresh_attempts()
 
     def closeEvent(self, event):
         if self.thread and self.thread.is_alive():

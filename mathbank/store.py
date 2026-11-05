@@ -38,7 +38,7 @@ class Store:
         self.path = self.root / "mathbank.sqlite3"
         with self.connect() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise ValueError("지원하지 않는 DB 버전입니다. 현재 데이터를 보존했습니다.")
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, name TEXT NOT NULL,
@@ -60,8 +60,9 @@ class Store:
                 CREATE INDEX IF NOT EXISTS records_kind ON records(kind);
                 CREATE TABLE IF NOT EXISTS trash(kind TEXT, target TEXT, created TEXT,
                     PRIMARY KEY(kind,target));
-                PRAGMA user_version=1;
             ''')
+            from .schema import migrate
+            migrate(db)
 
     @contextmanager
     def connect(self):
@@ -87,6 +88,14 @@ class Store:
             return dict(row)
 
     def add_document(self, path, course=""):
+        if Path(path).suffix.lower() == ".hwpx":
+            from .hwpx import import_hwpx
+            result = import_hwpx(self, path, course)
+            return result['document_id'], result['added']
+        if Path(path).suffix.lower() == ".hwp":
+            from .hwp_import import import_hwp
+            result = import_hwp(self, path, course)
+            return result['document_id'], result['added']
         import pymupdf
         path = Path(path)
         payload = path.read_bytes()
@@ -159,6 +168,17 @@ class Store:
         return [self.decode(r) for r in rows], total
 
     def update_question(self, identifier, version, content, stages, error="", manual=False):
+        if content.get('format') == 'structured-v2':
+            from .solver import fingerprint
+            import copy
+            content, stages = copy.deepcopy(content), copy.deepcopy(stages)
+            proof = content.get('verification', {})
+            new_version = version + int(manual)
+            if proof.get('state') == 'passed' and (proof.get('version') != new_version or proof.get('fingerprint') != fingerprint(content)):
+                content['verification_status'] = 'unverified'
+                content['verification'] = {'state': 'unverified', 'version': new_version, 'reason': '문항/정답/해설 수정으로 이전 검사 무효화'}
+                for key in ('answer', 'solution'):
+                    stages[key] = {'state': 'pending', 'version': new_version, 'reason': '내용 변경 후 재검사 필요'}
         with self.connect() as db:
             old = db.execute("SELECT * FROM questions WHERE id=?", (identifier,)).fetchone()
             if old is None or old["version"] != version or (old["user_modified"] and not manual):
@@ -191,14 +211,14 @@ class Store:
 
     def next_job(self):
         with self.connect() as db:
-            row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE kind WHEN 'question' THEN 0 ELSE 1 END, rowid LIMIT 1").fetchone()
+            row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN kind IN ('local_solve','variant_local_numeric','variant_local_thinking') THEN 0 WHEN kind='page' THEN 2 ELSE 1 END, rowid LIMIT 1").fetchone()
             return dict(row) if row else None
 
     def claim_job(self):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY "
-                             "CASE kind WHEN 'question' THEN 0 ELSE 1 END,rowid LIMIT 1").fetchone()
+                             "CASE WHEN kind IN ('local_solve','variant_local_numeric','variant_local_thinking') THEN 0 WHEN kind='page' THEN 2 ELSE 1 END,rowid LIMIT 1").fetchone()
             if row:
                 db.execute("UPDATE jobs SET status='running',updated=? WHERE id=?", (now(), row['id']))
                 return dict(row)
@@ -212,10 +232,10 @@ class Store:
                 db.execute("INSERT OR IGNORE INTO trash VALUES(?,?,?)", (kind, identifier, now()))
                 if kind == 'document':
                     db.execute("UPDATE jobs SET status='cancelled',error='자료 삭제' WHERE status IN ('queued','paused','running') "
-                               "AND ((kind='page' AND target LIKE ?) OR (kind='question' AND target IN "
+                               "AND ((kind='page' AND target LIKE ?) OR (kind<>'page' AND target IN "
                                "(SELECT id FROM questions WHERE document_id=?)))", (identifier + ':%', identifier))
                 elif kind == 'question':
-                    db.execute("UPDATE jobs SET status='cancelled',error='문항 삭제' WHERE kind='question' AND target=? "
+                    db.execute("UPDATE jobs SET status='cancelled',error='문항 삭제' WHERE kind<>'page' AND target=? "
                                "AND status IN ('queued','paused','running')", (identifier,))
 
     def trashed(self):
@@ -290,6 +310,10 @@ class Store:
             with closing(sqlite3.connect(snapshot)) as db:
                 for (relative,) in db.execute("SELECT path FROM documents"):
                     files[relative] = self.root / relative
+                for (relative,) in db.execute("SELECT path FROM assets"):
+                    files[relative] = self.root / relative
+                for (relative,) in db.execute("SELECT path FROM distributions WHERE path LIKE 'outputs/%'"):
+                    files[relative] = self.root / relative
             manifest = {name: digest(path.read_bytes()) for name, path in files.items()}
             temp_zip = Path(temp) / "backup.zip"
             with zipfile.ZipFile(temp_zip, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -317,7 +341,7 @@ class Store:
                 if manifest.get("version") != 1 or set(names) != set(manifest["files"]) | {"manifest.json"}:
                     raise ValueError("백업 버전 또는 파일 목록 오류입니다.")
                 for name, sha in manifest["files"].items():
-                    if name != "mathbank.sqlite3" and not __import__('re').fullmatch(r"sources/[0-9a-f]{64}\.pdf", name):
+                    if name != "mathbank.sqlite3" and not __import__('re').fullmatch(r"(?:sources/[0-9a-f]{64}\.(?:pdf|hwp|hwpx|csv)|assets/[0-9a-f]{64}\.[a-z0-9]{1,8}|outputs/[0-9a-f]{64}\.(?:pdf|hwpx))", name):
                         raise ValueError("허용되지 않은 백업 경로입니다.")
                     payload = archive.read(name)
                     if digest(payload) != sha:
@@ -326,12 +350,19 @@ class Store:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(payload)
             with closing(sqlite3.connect(staging / "mathbank.sqlite3")) as db:
-                if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA user_version").fetchone()[0] != 1:
+                if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2):
                     raise ValueError("DB 무결성/버전 오류입니다.")
                 if db.execute("PRAGMA foreign_key_check").fetchall():
                     raise ValueError("DB 참조 무결성 오류입니다.")
                 for path, sha in db.execute("SELECT path,hash FROM documents"):
                     if path not in manifest["files"] or manifest["files"][path] != sha:
                         raise ValueError("연결된 원본이 없거나 변조되었습니다.")
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='assets'").fetchone():
+                    for path, sha in db.execute("SELECT path,hash FROM assets"):
+                        if path not in manifest['files'] or manifest['files'][path] != sha:
+                            raise ValueError("연결된 자산이 없거나 변조되었습니다.")
+                    for path, sha in db.execute("SELECT path,hash FROM distributions WHERE path LIKE 'outputs/%'"):
+                        if path not in manifest['files'] or manifest['files'][path] != sha:
+                            raise ValueError('출력물 누락 또는 해시 불일치')
             shutil.copytree(staging, destination)
         return Store(destination)

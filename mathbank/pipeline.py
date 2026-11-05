@@ -57,6 +57,8 @@ class Pipeline:
 
     def enqueue_document(self, identifier):
         document = self.store.document(identifier)
+        if document['path'].endswith('.hwpx'):
+            raise ValueError('HWPX 문항은 이미 구조로 저장되었습니다. 정답·해설 생성에서 후속 작업을 선택하세요.')
         for page in range(document["pages"]):
             target = f"{identifier}:{page}"
             if not self.store.completed_page(target):
@@ -82,14 +84,26 @@ class Pipeline:
             try:
                 if job["kind"] == "page":
                     self.process_page(job)
+                elif job['kind'] in ('local_solve', 'ai_solve'):
+                    from .workflows import solve_question
+                    solve_question(self.store, self.provider, job, self.cancel)
+                elif job['kind'].startswith('variant_'):
+                    from .workflows import variant_question
+                    variant_question(self.store, self.provider, job, self.cancel)
                 else:
                     self.process_question(job)
             except Cancelled as exc:
+                from .workflows import failed_generation
+                failed_generation(self.store,job,str(exc))
                 self.store.job_status(job["id"], "cancelled", str(exc))
             except ProviderError as exc:
+                from .workflows import failed_generation
+                failed_generation(self.store,job,str(exc))
                 self.store.job_status(job["id"], "paused", str(exc))
                 self.cancel.set()
             except Exception as exc:
+                from .workflows import failed_generation
+                failed_generation(self.store,job,str(exc)[:300])
                 self.store.job_status(job["id"], "exception", f"{type(exc).__name__}: {str(exc)[:300]}")
 
     def process_page(self, job):

@@ -55,17 +55,21 @@ await document.fonts.ready; await Promise.all(Array.from(document.images).map(i=
 window.renderReady=true;}catch(e){window.renderError=String(e);}});</script></body></html>'''
 
 
-def make_exam(store, ids, title, mode="complete", points=5, layout="one"):
+def make_exam(store, ids, title, mode="complete", points=5, layout="two"):
     if not ids or len(ids) != len(set(ids)):
         raise ValueError("중복 없이 문항을 선택하세요.")
-    if points <= 0 or layout not in ("one", "two", "grid"):
+    import math
+    if type(points) not in (int, float) or not math.isfinite(points) or points <= 0 or layout not in ("one", "two", "grid"):
         raise ValueError("배점 또는 조판 설정 오류")
     questions = [store.question(identifier) for identifier in ids]
+    if any(store.is_trashed(q) for q in questions):
+        raise ValueError('휴지통 문항은 새 시험에 사용할 수 없습니다.')
     blocked = [q for q in questions if not printable(q)]
     if blocked and mode != "draft":
         raise ValueError("출력 예외: " + ", ".join(f'{q["number"] or q["id"][:8]} ({q["error"] or "자동 검사 미완료"})' for q in blocked))
     return store.put_record("exam", {"title": title, "questions": questions, "points": [points] * len(ids),
-                                     "layout": layout, "draft": mode == "draft"})
+                                     "layout": layout, "draft": mode == "draft", 'revision': 1,
+                                     'output_settings': {'columns': 1 if layout == 'one' else 2, 'per_page': 4, 'space_mm': 35}})
 
 
 def exam_html(exam, kind="questions"):
@@ -151,15 +155,18 @@ def grade_report(exam, student, grades, notes=None, expected_grade=""):
         if status != "미채점":
             earned += score
             graded += 1
-        key = f'{q["content"].get("unit", "미분류")} / Lv.{q["content"].get("level", "?")}'
+        c = q['content']
+        key = f'{c.get("unit", "미분류")} / {c.get("type", "미분류")} / 난이도 {c.get("difficulty", c.get("level", 3)*2)}/10'
         item = matrix.setdefault(key, {"earned": 0, "possible": 0, "pending": 0})
         if status == "미채점":
             item["pending"] += 1
         else:
             item["earned"] += score
             item["possible"] += maximum
-    return {"exam": exam, "student": student, "grades": grades, "earned": earned,
-            "possible": possible, "graded": graded, "matrix": matrix, "notes": notes or {},
+    for values in matrix.values():
+        values['earned'], values['possible'] = round(values['earned'], 4), round(values['possible'], 4)
+    return {"exam": exam, "student": student, "grades": grades, "earned": round(earned, 4),
+            "possible": round(possible, 4), "graded": graded, "matrix": matrix, "notes": notes or {},
             "expected_grade": expected_grade}
 
 
