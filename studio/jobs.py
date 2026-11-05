@@ -19,6 +19,7 @@ class Jobs:
         jid=identity()
         with self.store.transaction() as db:
             db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)',(jid,kind,encode(targets),encode(settings or {}),'queued',0,len(targets),0,'대기 중',stamp(),stamp()))
+            db.executemany('INSERT INTO job_items VALUES(?,?,?,?,?)',[(jid,i,encode(target),'pending','') for i,target in enumerate(targets)])
         self.resume(jid);return jid
     def cancel(self,jid):
         if jid in self.stops:self.stops[jid].set()
@@ -40,6 +41,7 @@ class Jobs:
             for index in range(completed,len(targets)):
                 if event.is_set():raise InterruptedError('취소됨 · 처리한 항목을 유지하며 재개할 수 있습니다.')
                 target=targets[index]
+                item_error=''
                 try:
                     if row['kind']=='import':
                         import_document(self.store,target,lambda count,total,detail:self._update(jid,detail=f'{index+1}/{len(targets)} 파일 · {count}/{total}문항 · {detail}'),event.is_set)
@@ -51,16 +53,21 @@ class Jobs:
                         if settings.get('provider','local')!='local':proposal=ai.explain(q,settings,event.is_set)
                         answer=check_question(q,proposal)
                         self.store.save_answer(q['id'],q['revision'],q['fingerprint'],answer)
-                        if answer['verification']!='passed':failed+=1
+                        if answer['verification']!='passed':
+                            failed+=1;item_error=answer['reason']
                     elif row['kind']=='variant':
                         self._update(jid,detail=f"{index+1}/{len(targets)} · {'숫자' if target['kind']=='numeric' else '사고'}변형 생성·검증")
-                        generate(self.store,target['id'],target['kind'],settings,jid+':'+str(index),event.is_set)
+                        child=generate(self.store,target['id'],target['kind'],settings,jid+':'+str(index),event.is_set)
+                        q=self.store.question(child)
+                        if not q['available']:failed+=1;item_error=q['answer']['reason']
                     else:raise ValueError('지원하지 않는 작업입니다.')
                 except InterruptedError:raise
                 except Exception as exc:
-                    failed+=1;errors.append({'index':index,'target':target,'reason':str(exc)[:500]})
+                    failed+=1;item_error='작업 실패: '+str(exc)[:500];errors.append({'index':index,'target':target,'reason':item_error})
+                with self.store.transaction() as db:
+                    db.execute('INSERT INTO job_items VALUES(?,?,?,?,?) ON CONFLICT(job_id,position) DO UPDATE SET state=excluded.state,error=excluded.error',(jid,index,encode(target),'failed' if item_error else 'completed',item_error))
                 completed=index+1
-                self._update(jid,completed=completed,failed=failed,detail=(errors[-1]['reason'] if errors else f'{completed}/{len(targets)} 처리 완료'))
+                self._update(jid,completed=completed,failed=failed,detail=(item_error or f'{completed}/{len(targets)} 처리 완료'))
             self._update(jid,state='completed',detail=f'{completed}건 처리 · 보류/실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ''))
         except InterruptedError as exc:self._update(jid,state='cancelled',detail=str(exc))
         except Exception as exc:self._update(jid,state='failed',detail=str(exc)[:500])

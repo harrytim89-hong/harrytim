@@ -24,7 +24,8 @@ def read_package(path):
     audit={};converted=None
     if data.startswith(bytes.fromhex('d0cf11e0a1b11ae1')):
         from hwpx.hwp5.package import convert
-        converted=convert(data)
+        try:converted=convert(data)
+        except Exception as exc:raise ValueError('HWP 변환에 실패했습니다. 암호·배포용·DRM 자료는 한글에서 보호를 해제한 HWPX로 저장해 주세요. 상세: '+str(exc)[:300]) from exc
         files=converted.files
         audit={'converter':'python-hwpx 6.11.0','unconverted':dict(converted.report.unconverted),'dropped':dict(converted.report.dropped)}
     elif zipfile.is_zipfile(io.BytesIO(data)):
@@ -122,7 +123,10 @@ class Decoder:
                     blocks=[b for sub in tc if local(sub.tag)=='subList' for b in self.parse(sub)]
                     row.append({'blocks':blocks,'colspan':int(span.get('colSpan','1')) if span is not None else 1,'rowspan':int(span.get('rowSpan','1')) if span is not None else 1})
                 rows.append(row)
-            return [{'kind':'table','rows':rows}]
+            result=[{'kind':'table','rows':rows}]
+            for caption in node:
+                if local(caption.tag)=='caption':result.extend(b for sub in caption if local(sub.tag)=='subList' for b in self.parse(sub))
+            return result
         if tag=='rect':
             draw=elements(node,'drawText')
             if not draw: return [self.issue(node,'텍스트가 없는 도형의 관계를 확인해 주세요.')]
@@ -142,7 +146,9 @@ class Decoder:
         if tag=='autoNum':
             if node.get('numType') in ('PAGE','ENDNOTE','FOOTNOTE'): return []
             return [{'kind':'text','value':node.get('num','')+'. '}]
-        return [b for child in node for b in self.parse(child)]
+        if tag in ('run','ctrl','subList'):
+            return [b for child in node for b in self.parse(child)]
+        return [self.issue(node,'미지원 본문 개체: '+tag)]
 
 def choice_split(blocks):
     content=[];choices=[];current=None
@@ -170,7 +176,9 @@ def classify(body,metadata):
     unit='미분류';kind='미분류';difficulty=5
     if any(w in text for w in ('다항식','나머지','이차식')): unit='다항식';kind='다항식의 연산' if '연산' in text or 'A' in text and 'B' in text else '나머지정리'
     if any(w in text for w in ('방정식','중근','실근','최댓값','최솟값')): unit='방정식과 부등식';kind='방정식과 실근'
-    if any(w in text for w in ('복소수','허수','켤레')): unit='복소수';kind='복소수의 연산'
+    if any(w in text for w in ('복소수','허수','켤레')) or 'i =' in text and '\\sqrt' in text: unit='복소수';kind='복소수의 연산'
+    if '판매액' in text:unit='방정식과 부등식';kind='이차함수의 활용'
+    if '원기둥' in text:unit='기하';kind='입체도형의 부피'
     if '자연수' in text:kind='정수 조건 탐색';difficulty=7
     if body['answer_format']=='short': difficulty=7
     return {'course':metadata.get('course','미상'),'unit':unit,'type':kind,'certainty':'suggested','basis':'본문 어휘에 의한 자동 제안'},difficulty

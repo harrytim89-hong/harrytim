@@ -26,6 +26,11 @@ def math_content(b):
         if len(groups)>1:return '#linebreak()'.join('#math.equation(block:false,$ '+formula_typst({'tag':'mrow','children':cs})+' $)' for cs in groups)
     return '#math.equation(block: false, $ '+formula_typst(tree)+' $)'
 
+def answer_content(question,answer):
+    if question['body']['answer_format']=='short' and answer.get('exact_value'):
+        return math_content(equation(answer['exact_value'],'latex'))
+    return content_text(answer.get('final_answer') or question.get('original_answer') or '미생성')
+
 class PDF:
     def __init__(self,store,directory):self.store=store;self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True)
     def blocks(self,blocks):
@@ -88,7 +93,7 @@ class PDF:
         if kind=='answers':
             cells=[]
             for item in items:
-                q=item['snapshot'];a=q.get('answer') or {};cells.extend(['['+content_text(str(item['position']).zfill(2))+']','['+content_text(a.get('final_answer') or q.get('original_answer') or '미생성')+']'])
+                q=item['snapshot'];a=q.get('answer') or {};cells.extend(['['+content_text(str(item['position']).zfill(2))+']','['+answer_content(q,a)+']'])
             source+='#table(columns:(1fr,2fr,1fr,2fr),inset:9pt,stroke:0.5pt + rgb("#dbe0e9"),'+','.join(cells)+')'
         else:
             columns=max(1,min(2,int(exam['settings'].get('columns',2))))
@@ -100,7 +105,7 @@ class PDF:
                     source+='#block(fill:rgb("#f0f2fa"),inset:8pt,width:100%)['+content_text(cl['unit']+' · '+cl['type'])+']\n\n';previous=(cl['unit'],cl['type'])
                 heading='#block(breakable:false)[#text(weight:"bold",size:12pt,fill:accent)['+content_text(str(num).zfill(2))+'] #h(4pt) #text(size:8pt,fill:rgb("#747d90"))['+content_text(cl['unit']+'  ·  난이도 '+str(q['difficulty'])+'/10  ·  '+str(item['points'])+'점')+']\n\n'
                 if kind=='solutions':
-                    source+=heading+content_text('정답  '+(a.get('final_answer') or q.get('original_answer') or '미생성'))+']\n\n'
+                    source+=heading+content_text('정답  ')+answer_content(q,a)+']\n\n'
                     if a.get('verification')!='passed':source+=content_text('검증 보류 · '+a.get('reason','해설을 먼저 생성해 주세요.'))+'\n\n'
                     for step in a.get('steps',[]):source+='#text(weight:"bold",size:9pt,fill:accent)['+content_text(step['title'])+']\n\n'+self.blocks(step['blocks'])
                     source+='#v(10pt)\n'
@@ -173,7 +178,10 @@ def hwpx_exam(store,exam,target,kind='questions',student=''):
             elif k=='unsupported':doc.add_paragraph('입력 보류: '+block['label']);p=None
     for item in exam['items']:
         q=item['snapshot'];a=q.get('answer') or {};doc.add_paragraph(f"{item['position']}.  [{item['points']:g}점]")
-        if kind=='answers':doc.add_paragraph(a.get('final_answer') or q.get('original_answer') or '미생성')
+        if kind=='answers':
+            p=doc.add_paragraph()
+            if q['body']['answer_format']=='short' and a.get('exact_value'):p.add_equation(to_eqedit(equation(a['exact_value'],'latex')))
+            else:p.add_run(a.get('final_answer') or q.get('original_answer') or '미생성')
         elif kind=='solutions':
             doc.add_paragraph('정답: '+(a.get('final_answer') or q.get('original_answer') or '미생성'))
             for step in a.get('steps',[]):doc.add_paragraph(step['title']);put(step['blocks'])

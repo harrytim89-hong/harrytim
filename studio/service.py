@@ -15,6 +15,9 @@ class Service:
         blocks=[q['body']['blocks'],*q['body'].get('choices',[])]
         if q.get('answer'):
             blocks.extend(s['blocks'] for s in q['answer'].get('steps',[]))
+            if q['body']['answer_format']=='short' and q['answer'].get('exact_value'):
+                try:q['answer']['final_mathml']=equation(q['answer']['exact_value'],'latex')['mathml']
+                except ValueError:pass
         edit_index=0
         for group in blocks:
             for b in paragraphs(group):
@@ -43,7 +46,9 @@ class Service:
         if action=='resume':self.jobs.resume(args['id']);return True
         if action=='retry':
             job=s.rows('SELECT * FROM jobs WHERE id=?',(args['id'],))[0]
-            return self.jobs.start(job['kind'],json.loads(job['targets']),json.loads(job['settings']))
+            failed=s.rows("SELECT target FROM job_items WHERE job_id=? AND state='failed' ORDER BY position",(args['id'],))
+            if not failed:raise ValueError('재시도할 실패 항목이 없습니다. 중단한 작업은 재개를 선택해 주세요.')
+            return self.jobs.start(job['kind'],[json.loads(i['target']) for i in failed],json.loads(job['settings']))
         if action=='student':return s.add_student(args)
         if action=='exam':return s.create_exam(args)
         if action=='exam_detail':
@@ -69,6 +74,11 @@ class Service:
                 if not 1<=v<=10:raise ValueError('난이도는 1~10입니다.')
                 changes['difficulty']=v
             if 'classification' in args:changes['classification']={**q['classification'],**args['classification'],'certainty':'user_confirmed'}
+            if 'provided_answer' in args and str(args['provided_answer']).strip()!=(q.get('original_answer') or ''):
+                answer=str(args['provided_answer']).strip()
+                if len(answer)>300:raise ValueError('제공 정답은 300자 이하로 입력해 주세요.')
+                changes['original_answer']=answer or None
+                changes['source']={**q['source'],'answer_origin':'user_entry','previous_answer_origin':q['source'].get('answer_origin')}
             if 'body' in args:
                 # A form may edit text or equation source; regenerate every math tree.
                 body=copy.deepcopy(q['body']);edits=args['body']

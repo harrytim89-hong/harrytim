@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS attempts(id TEXT PRIMARY KEY, exam_id TEXT NOT NULL R
 CREATE TABLE IF NOT EXISTS results(attempt_id TEXT NOT NULL REFERENCES attempts(id), item_id TEXT NOT NULL REFERENCES exam_items(id), submitted TEXT NOT NULL, score REAL, status TEXT NOT NULL, PRIMARY KEY(attempt_id,item_id));
 CREATE TABLE IF NOT EXISTS exports(id TEXT PRIMARY KEY, exam_id TEXT REFERENCES exams(id), student_id TEXT REFERENCES students(id), kind TEXT NOT NULL, path TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, targets TEXT NOT NULL, settings TEXT NOT NULL, state TEXT NOT NULL, completed INTEGER NOT NULL, total INTEGER NOT NULL, failed INTEGER NOT NULL, detail TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS job_items(job_id TEXT NOT NULL REFERENCES jobs(id), position INTEGER NOT NULL, target TEXT NOT NULL, state TEXT NOT NULL, error TEXT NOT NULL, PRIMARY KEY(job_id,position));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_question_document ON questions(document_id);
 PRAGMA user_version=1;
@@ -179,7 +180,8 @@ class Store:
         if confirm and any(not q['available'] for q in questions): raise ValueError('확정 시험에는 자동 검사 통과 문항만 포함할 수 있습니다. 보류 문항은 초안으로 확인해 주세요.')
         eid=identity(); family=data.get('family_id') or eid
         rev=self.rows('SELECT MAX(revision) AS n FROM exams WHERE family_id=?',(family,))[0]['n'] or 0
-        points=data.get('points') or [round(100/len(ids),2)]*len(ids)
+        base,remainder=divmod(10000,len(ids))
+        points=data.get('points') or [(base+(i<remainder))/100 for i in range(len(ids))]
         if len(points)!=len(ids) or any(not isinstance(p,(int,float)) or not 0<p<=10000 for p in points): raise ValueError('문항별 배점을 확인해 주세요.')
         with self.transaction() as db:
             db.execute('INSERT INTO exams VALUES(?,?,?,?,?,?,?,?)',(eid,family,rev+1,'confirmed' if confirm else 'draft',str(data.get('title','새 시험')),str(data.get('date','')),encode(data.get('settings',{})),stamp()))

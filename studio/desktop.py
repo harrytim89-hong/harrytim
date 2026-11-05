@@ -53,6 +53,12 @@ class Bridge(QObject):
                     if not target:self.deliver(request_id,'null','');return
                     args['target']=target
             if action=='open_folder':QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.store.root)));self.deliver(request_id,'true','');return
+            if action=='open_workspace':
+                directory=args.get('directory') or QFileDialog.getExistingDirectory(self.window,'열 자료실 폴더 선택')
+                if not directory:self.deliver(request_id,'null','');return
+                if not (Path(directory)/'studio.sqlite').is_file():raise ValueError('MathBank Studio 자료실 DB가 없는 폴더입니다. 복원한 자료실 폴더를 선택해 주세요.')
+                other=Window(Store(directory));self.window.other_windows.append(other);other.show();other.raise_();other.activateWindow()
+                self.deliver(request_id,'true','');return
             self.executor.submit(self.work,request_id,action,args)
         except Exception as exc:self.deliver(request_id,'null',str(exc))
     def work(self,request_id,action,args):
@@ -81,6 +87,7 @@ class Bridge(QObject):
 class Window(QMainWindow):
     def __init__(self,store):
         super().__init__();self.setWindowTitle('MathBank Studio');self.resize(1480,960);self.setMinimumSize(1080,760)
+        self.other_windows=[]
         self.setWindowIcon(QIcon(str(Path(__file__).parent/'ui/assets/studio.ico')))
         self.view=QWebEngineView(self);self.page=Page(self.view);self.view.setPage(self.page);self.setCentralWidget(self.view)
         self.page.settings().setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls,False)

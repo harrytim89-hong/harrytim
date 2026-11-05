@@ -200,6 +200,7 @@ def solve_policy(body):
         curves=[e.rhs-e.lhs for e in eqs if e.lhs==y]
         linear=next((e for e in curves if S.degree(e,x)==1),None);quadratics=[e for e in curves if S.degree(e,x)==2]
         if linear is not None and len(quadratics)==2:
+            if any(not same(e,linear) for e in curves if S.degree(e,x)==1):raise Unsupported('두 조건에 제시된 직선이 서로 다릅니다.')
             p1=S.expand(quadratics[0]-linear);p2=S.expand(quadratics[1]-linear);d1=S.discriminant(p1,x);d2=S.discriminant(p2,x)
             candidates=S.solve(d1,k);valid=[v for v in candidates if v.is_real and d2.subs(k,v)<0]
             if len(valid)!=1:raise Unsupported('조건을 만족하는 직선이 유일하지 않습니다.')
@@ -227,7 +228,12 @@ def solve_policy(body):
         if target is not None and target.free_symbols<={z} and known.free_symbols==set():
             evaluated=S.simplify(S.expand_complex(target.subs(z,known)))
             if evaluated.has(S.zoo,S.nan,S.oo):raise Unsupported('복소수 분모가 0입니다.')
-            value=S.re(evaluated)+S.im(evaluated) if target_eq is not None and same(target_eq.rhs,a+b*S.I) and any(same(e,a+b) for e in expressions) else evaluated
+            if target_eq is not None:
+                if not same(target_eq.rhs,a+b*S.I):raise Unsupported('실수부·허수부의 정의가 다릅니다.')
+                requested=next((e for e in expressions if e.free_symbols=={a,b}),None)
+                if requested is None:raise Unsupported('물은 실수부·허수부 조합을 확인하지 못했습니다.')
+                value=requested.subs({a:S.re(evaluated),b:S.im(evaluated)})
+            else:value=evaluated
             # Independent exact substitution with common-denominator expansion.
             alternate=S.expand_complex(S.cancel(target).subs(z,known))
             if not same(evaluated,alternate):raise Unsupported('복소수 독립 재계산 불일치')
@@ -247,6 +253,8 @@ def solve_policy(body):
                         witnesses.append(S.Eq(S.sqrt(arg,evaluate=False),root,evaluate=False))
             return solution(value,'principal-complex-radicals',[math_step('01 · 음수의 제곱근을 바꿉니다','양수 c에 대해 주값 √(-c)=i√c를 사용합니다. ',*witnesses),math_step('02 · 곱과 몫을 각각 정리합니다','각 근호를 위 결과로 바꾸어 곱과 몫을 계산합니다. i²=-1에 유의하고 분모를 유리화합니다.'),math_step('03 · 실수부와 허수부를 모읍니다',value)],['제곱근 주값 규약','각 근호 제곱 및 주값 부호 정확 검사','분모 0 여부','정확한 복소수 유리화'])
     if '서로 다른 세 이차다항식' in text and '나누어떨어진다' in text and '최고차항의 계수' in text:
+        constants=[e for e in expressions if not e.free_symbols and e.is_number]
+        if not constants or constants[0]!=1:raise Unsupported('최고차항 계수 1인 이차다항식에 대한 정책입니다.')
         f,g,h=[S.Function(v) for v in ('f','g','h')]
         products=[e for e in expressions if e.has(f(x)) and e.has(h(x)) is False]
         divisions=[e for e in expressions if e.has(h(x)) and not e.has(f(x)) and e.is_Mul and e!=g(x)*h(x)]
@@ -280,6 +288,8 @@ def solve_policy(body):
                 assert S.rem((unknown-known).subs(sol[0]),small,x)==0
                 return solution(value,'nested-polynomial-remainders',[math_step('01 · 두 제수의 관계를 확인합니다',S.factor(large),'에서 작은 제수는 큰 제수의 인수입니다.'),math_step('02 · 나머지를 다시 나눕니다','큰 제수에 대한 나머지를 작은 제수로 나눈 결과가 원래 나머지와 같아야 합니다. 계수를 비교하면 '+str(sol[0])+'입니다.'),math_step('03 · 계산하고 나눗셈을 검산합니다',S.Eq(target,value))],['제수 정확한 인수 관계','차수에 맞는 나머지','계수 연립 유일해','두 나머지 차의 정확 나눗셈'])
     if '서로 다른 실근' in text and '삼차방정식' in text:
+        counts=[e for e in expressions if not e.free_symbols and e.is_number]
+        if counts!=[S.Integer(2)]:raise Unsupported('서로 다른 실근이 정확히 두 개인 경우의 정책입니다.')
         eq=next(e for e in eqs if x in e.free_symbols and a in e.free_symbols);p=eq.lhs-eq.rhs
         if S.degree(p,x)!=3 or S.Poly(p,x).LC().free_symbols:raise Unsupported('삼차식의 차수가 변할 수 있습니다.')
         candidates=S.solve(S.discriminant(p,x),a);valid=[];witness=[]
@@ -307,6 +317,15 @@ def solve_policy(body):
                     minimum=2*bb if low<=aa<=high else min(endpoints)
                     if max(endpoints)+minimum<=limit:pairs.append((aa,bb))
             return solution(S.Integer(len(pairs)),'natural-quadratic-extrema',[math_step('01 · 유한 탐색 범위를 증명합니다','최댓값과 최솟값은 각각 2b 이상이므로 4b≤'+str(limit)+'입니다. a가 오른쪽 끝점보다 크면 최소 거리와 b≥1에서 a≤'+str(maxa)+'를 얻습니다.'),math_step('02 · 꼭짓점과 양끝을 비교합니다','각 자연수 a,b에 대해 최댓값은 양끝 함수값 중 큰 값입니다. 꼭짓점 a가 구간 안이면 최솟값은 2b, 밖이면 양끝 중 작은 값입니다.'),math_step('03 · 모든 후보를 셉니다','증명된 범위의 '+str(maxa*maxb)+'쌍을 빠짐없이 계산한 결과 조건을 만족하는 순서쌍은 '+str(len(pairs))+'개입니다.')],['양수 자연수 정의역','b·a 유한 상한 증명','구간 내외 꼭짓점·양끝 정확 평가','유한 전집합 완전 탐색'],{'pairs':pairs})
+    if '원기둥' in text and '반지름' in text and '높이가 같은' in text and '남기고' in text:
+        unit=symbol('m')
+        volume=next((S.simplify(e/(S.pi*unit**3)) for e in expressions if e.has(S.pi) and e.has(unit)),None)
+        gap=next((S.simplify(e/unit) for e in expressions if e.has(unit) and e.free_symbols=={unit} and not e.has(S.pi)),None)
+        if volume is not None and gap is not None and volume.is_positive and gap.is_positive:
+            polynomial=x*x*(x-gap)-volume;roots=S.real_roots(polynomial,x);valid=[r for r in roots if r>gap]
+            if len(valid)!=1:raise Unsupported('실현 가능한 원기둥 높이가 유일하지 않습니다.')
+            value=valid[0];assert same(polynomial.subs(x,value),0)
+            return solution(value,'cylinder-volume-text-only',[math_step('01 · 본문의 부피 조건을 식으로 씁니다','반지름과 높이가 x이고 빈 높이가 ',gap,'이면 물 높이는 x에서 빈 높이를 뺀 값입니다. 따라서 ',S.Eq(x*x*(x-gap),volume,evaluate=False),'입니다.'),math_step('02 · 가능한 높이를 구합니다','물 높이가 양수여야 하므로 ',S.Gt(x,gap),'입니다. 부피 방정식의 모든 실근 중 이 범위를 만족하는 근은 ',value,'뿐입니다.'),math_step('03 · 부피를 검산하고 도형 검증을 구분합니다','계산한 값을 부피식에 대입하면 일치합니다. 다만 원본 그림 관계는 독립 검증하지 못했으므로 자동 배부는 보류합니다.')],['본문 반지름=높이와 단위 일치','물 높이 양수','부피 방정식 모든 실근 및 유일한 실현 해','원래 부피식 정확 대입'])
     raise Unsupported('이 문항의 조건 전체를 검증하는 수학 정책이 아직 없습니다. AI 풀이를 생성할 수 있지만 자동 배부는 보류합니다.')
 
 def _trees(t):
@@ -349,13 +368,15 @@ POLICY_WORDS = {
  'principal-complex-radicals': '실수',
  'distinct-monic-quadratic-divisibility': '최고차항 계수 이차다항식 만족시킨다 다항식 나누어떨어진다',
  'natural-quadratic-extrema': '자연수 이차함수 이라 하자 만족시키는 순서쌍 개수',
+ 'cylinder-volume-text-only':'아래 그림 같이 밑면 반지름 길이 높이가 같은 원기둥 모양 수조 물 부었더니 위 부터 남기고 채워졌다 높이 두께 생각하지 않는다',
 }
-FORMULA_LIMITS = dict(zip(POLICY_WORDS, [3,3,4,2,8,4,4,4,5,5,8,7,4,5,9,3,7,4,4,8,8]))
+FORMULA_LIMITS = dict(zip(POLICY_WORDS, [3,3,4,2,8,4,4,4,5,5,8,7,4,5,9,3,7,4,4,8,8,4]))
 
 def semantic_coverage(body,policy):
     signature=language_signature(body['blocks'])
     signature=re.sub(r'\([가-라]\)','',signature)
     # Reject additional structures/conditions rather than ignoring them.
+    if policy=='cylinder-volume-text-only' and signature.count('§')==1:signature=signature.replace('§','')
     if signature.count('@') > FORMULA_LIMITS.get(policy,0) or '§' in signature:return False
     relations=[e for _,e in expression_items(body) if isinstance(e,(S.LessThan,S.GreaterThan,S.StrictLessThan,S.StrictGreaterThan,S.Unequality))]
     if relations and (policy!='natural-quadratic-extrema' or len(relations)!=1):return False
