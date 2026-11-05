@@ -61,7 +61,7 @@ def plain_text(blocks):
 def available(question):
     answer = question.get('answer') or {}
     proof = answer.get('proof') or {}
-    return (question['input_state']=='complete' and answer.get('verification')=='passed'
+    return (question['input_state']=='complete' and not question.get('text_review',{}).get('blocking') and not question.get('source',{}).get('answer_ambiguity') and answer.get('verification')=='passed'
             and proof.get('body_fingerprint')==question['fingerprint']
             and bool(answer.get('final_answer')) and bool(answer.get('steps')))
 

@@ -426,6 +426,8 @@ def check_question(question,proposal=None):
                 except Unsupported:conflicts.append('별도 재풀이 정답을 해석하지 못했습니다.')
         if conflicts:base.update(verification='failed',reason=' '.join(conflicts))
         elif question['input_state']!='complete':base.update(reason='입력 구조에 보류 사항이 남아 있습니다.')
+        elif question.get('text_review',{}).get('blocking'):base.update(reason='문장 검수에서 깨진 문자가 발견되었습니다. 원문과 대조해 수정해 주세요.')
+        elif question.get('source',{}).get('answer_ambiguity'):base.update(reason='원본 주석의 정답·해설 구분이 불분명합니다. 원문 주석을 확인해 주세요.')
         elif any(b['kind']=='image' for b in paragraphs(body['blocks'])):base.update(reason='그림의 관계와 표기를 독립적으로 확인하지 못했습니다.')
         else:base.update(verification='passed',reason='필수 검사를 충족하여 자동 사용 가능합니다.')
     except (Unsupported,ValueError,TypeError,StopIteration,NotImplementedError,AssertionError,AttributeError,S.PolynomialError) as exc:

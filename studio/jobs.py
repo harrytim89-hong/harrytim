@@ -45,9 +45,22 @@ class Jobs:
                 try:
                     if row['kind']=='import':
                         imported=import_document(self.store,target,lambda count,total,detail:self._update(jid,detail=f'{index+1}/{len(targets)} 파일 · {count}/{total}문항 · {detail}'),event.is_set)
+                        with self.store.transaction() as db:db.execute('INSERT OR IGNORE INTO job_documents VALUES(?,?)',(jid,imported['document_id']))
                         saved_held+=imported.get('held',0)
                         if imported.get('boundary_review'):messages.append('원문 저장 완료 · 문항검색에서 문항 나누기로 경계를 확인해 주세요.')
                         elif imported.get('duplicate'):messages.append(imported['message'])
+                    elif row['kind']=='reparse':
+                        doc=next(d for d in self.store.documents() if d['id']==target)
+                        self._update(jid,detail='관리 원본에서 문항 경계를 다시 분석합니다')
+                        result=import_document(self.store,self.store.path(doc['path']),lambda count,total,detail:self._update(jid,detail=f'{count}/{total}문항 · {detail}'),event.is_set,replace_document=target)
+                        saved_held+=result.get('held',0)
+                        with self.store.transaction() as db:db.execute('INSERT OR IGNORE INTO job_documents VALUES(?,?)',(jid,target))
+                        messages.append('재분리 결과를 저장했습니다. 이전 문항과 시험 기록은 보존했습니다.')
+                    elif row['kind']=='proofread':
+                        from .proofreading import run
+                        self._update(jid,detail=f'{index+1}/{len(targets)} · 원문·문장 검수')
+                        reviewed=run(self.store,target,settings,event.is_set)
+                        if reviewed.get('ai_state')=='failed':failed+=1;item_error=reviewed['ai_error']
                     elif row['kind']=='explain':
                         q=self.store.question(target)
                         if not q:raise ValueError('문항이 없습니다.')
@@ -72,7 +85,7 @@ class Jobs:
                     db.execute('INSERT INTO job_items VALUES(?,?,?,?,?) ON CONFLICT(job_id,position) DO UPDATE SET state=excluded.state,error=excluded.error',(jid,index,encode(target),'failed' if item_error else 'completed',item_error))
                 completed=index+1
                 self._update(jid,completed=completed,failed=failed,detail=(item_error or f'{completed}/{len(targets)} 처리 완료'))
-            self._update(jid,state='completed',detail=f'{completed}개 파일 처리 · 저장 보류 {saved_held}문항 · 실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ' · '+messages[-1] if messages else '') if row['kind']=='import' else f'{completed}건 처리 · 보류/실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ''))
+            self._update(jid,state='completed',detail=f'{completed}개 자료 처리 · 저장 보류 {saved_held}문항 · 실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ' · '+messages[-1] if messages else '') if row['kind'] in ('import','reparse') else f'{completed}건 처리 · 보류/실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ''))
         except InterruptedError as exc:self._update(jid,state='cancelled',detail=str(exc))
         except Exception as exc:self._update(jid,state='failed',detail=str(exc)[:500])
         finally:self.stops.pop(jid,None);self.notify()

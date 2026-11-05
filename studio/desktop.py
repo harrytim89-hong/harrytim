@@ -18,6 +18,7 @@ from .service import Service
 from .exports import export_packet,PDF
 from .assessment import report
 from .model import identity
+from . import VERSION
 
 class Page(QWebEnginePage):
     def acceptNavigationRequest(self,url,type_,main):
@@ -79,14 +80,14 @@ class Bridge(QObject):
             elif action=='restore':result=Store.restore(args['archive'],args['directory'])
             else:result=self.service.command(action,args)
             self.finished.emit(request_id,json.dumps(result,ensure_ascii=False),'')
-            if action!='snapshot':self.changed.emit()
+            if action not in ('snapshot','document_review','source_view','boundary_suggestions','report','exam_detail','connect'):self.changed.emit()
         except Exception as exc:self.finished.emit(request_id,'null',str(exc)[:1500])
     @Slot(str,str,str)
     def deliver(self,request_id,value,error):self.reply.emit(json.dumps({'id':request_id,'value':json.loads(value),'error':error},ensure_ascii=False))
 
 class Window(QMainWindow):
     def __init__(self,store):
-        super().__init__();self.setWindowTitle('MathBank Studio');self.resize(1480,960);self.setMinimumSize(1080,760)
+        super().__init__();self.setWindowTitle('MathBank Studio '+VERSION);self.resize(1480,960);self.setMinimumSize(1080,760)
         self.other_windows=[]
         self.setWindowIcon(QIcon(str(Path(__file__).parent/'ui/assets/studio.ico')))
         self.view=QWebEngineView(self);self.page=Page(self.view);self.view.setPage(self.page);self.setCentralWidget(self.view)
@@ -102,9 +103,12 @@ def main():
     if args.self_test:
         from .selftest import run
         return run()
-    app=QApplication(sys.argv);app.setApplicationName('MathBank Studio');app.setOrganizationName('MathBankStudio')
+    app=QApplication(sys.argv);app.setApplicationName('MathBank Studio');app.setApplicationVersion(VERSION);app.setOrganizationName('MathBankStudio')
     base=Path(args.workspace) if args.workspace else Path(os.environ.get('LOCALAPPDATA',Path.home()/'.local/share'))/'MathBankStudio'
-    window=Window(Store(base));window.show()
+    try:window=Window(Store(base))
+    except Exception as exc:
+        QMessageBox.critical(None,'자료실을 열지 못했습니다',str(exc)+'\n\n자료실 파일은 그대로 보존되어 있습니다. 최신 프로그램으로 다시 실행해 주세요.');return 1
+    window.show()
     if args.capture:
         def capture():
             window.page.runJavaScript('navigate('+json.dumps(args.capture_page)+')')

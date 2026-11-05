@@ -9,7 +9,7 @@ from xml.etree.ElementTree import Element
 from .formula import local
 
 SKIP={'header','footer','endNote','footNote','secPr','linesegarray'}
-CUES=re.compile(r'\?|？|구하|값은|계산하|계산하면|나타내|증명하|고르|옳은|옳지|몇|만족|최댓값|최솟값')
+CUES=re.compile(r'\?|？|구하|값은|계산하|계산하면|나타내|증명하|고르|옳은|옳지|몇|만족|최댓값|최솟값|전개하|인수분해하|보여라|풀어라|구하여라')
 # Decimal literals such as 0.8 or 1.5 must not become question numbers.
 PREFIX=re.compile(r'^\s*(?:(?P<label>\[?\s*(?:문제|문항|물음|서답형|서술형)\s*(?P<ln>\d{1,4})\s*\]?[.):．]?)[\s\u3000]*|(?P<bracket>[\[【(（]\s*(?P<bn>\d{1,4})\s*[\]】)）])\s*|(?P<plain>(?P<pn>\d{1,4})\s*[.．](?!\d)|(?P<rn>\d{1,4})\s*[)）])\s*)')
 
@@ -27,7 +27,21 @@ def visible_text(p):
     return read(p)
 
 def prefix(p):
-    match=PREFIX.match(visible_text(p))
+    text=visible_text(p)
+    # Some Hancom documents put the question label itself in an equation run.
+    for run in p:
+        if local(run.tag)!='run':continue
+        for child in run:
+            if local(child.tag)=='t' and (child.text or '').strip():break
+            if local(child.tag)=='equation':
+                script=''.join(n.text or '' for n in child.iter() if local(n.tag)=='script').strip()
+                script=re.sub(r'[`~{}\s]','',script)
+                if re.fullmatch(r'\d{1,4}[.)]',script):
+                    return int(script[:-1]),'math-label',''
+                break
+        else:continue
+        break
+    match=PREFIX.match(text)
     if not match:return None
     number=int(next(match[k] for k in ('ln','bn','pn','rn') if match[k] is not None))
     if not number:return None
@@ -42,6 +56,22 @@ def own_notes(p):
         if tag in ('tbl','rect','header','footer','secPr'):return
         for c in n:visit(c)
     visit(p);return result
+
+def note_at_start(p,note):
+    """A reference after prose is not a question-number anchor."""
+    before=[]
+    def visit(n):
+        if n is note:return True
+        tag=local(n.tag)
+        if tag in ('header','footer','tbl','rect','secPr','linesegarray'):return False
+        if tag in ('endNote','footNote'):return False
+        if tag=='t':before.append(n.text or '')
+        if tag=='equation':before.append('§')
+        return any(visit(c) for c in n)
+    visit(p)
+    text=''.join(before).strip();mark=PREFIX.match(text)
+    if mark:text=text[mark.end():].strip()
+    return not text
 
 def quick_answer(note):
     text=''.join(n.text or '' for n in note.iter() if local(n.tag)=='t').strip()
@@ -73,14 +103,22 @@ def _sequence(items):
 def _container_question_evidence(container):
     # A condition table with numbered rows is not a set of questions.
     ps=[p for p in container.iter() if local(p.tag)=='p']
-    starts=[(i,prefix(p)) for i,p in enumerate(ps) if prefix(p)]
+    starts=[]
+    for i,p in enumerate(ps):
+        mark=prefix(p)
+        if mark:starts.append((i,mark))
+        else:
+            ns=own_notes(p)
+            if len(ns)==1 and note_at_start(p,ns[0]):
+                try:starts.append((i,(int(ns[0].get('number','0')),'note','')))
+                except ValueError:pass
     if not starts:return False
     nums=[v[1][0] for v in starts]
     if len(nums)>1 and not all(b==a+1 for a,b in zip(nums,nums[1:])):return False
     for offset,(i,mark) in enumerate(starts):
         end=starts[offset+1][0] if offset+1<len(starts) else len(ps)
         text=' '.join(visible_text(p) for p in ps[i:end])
-        if mark[1]!='label' and not CUES.search(text):return False
+        if mark[1] not in ('label','note') and not CUES.search(text):return False
     return True
 
 def _line_units(p):
@@ -168,7 +206,7 @@ def _headings(files):
             levels={}
             for head in descendants(n,'paraHead'):
                 level=int(head.get('level','1'))-1
-                levels[level]=int(head.get('start',n.get('start','1')))
+                levels[level]={'start':int(head.get('start',n.get('start','1'))),'format':head.get('numFormat','DIGIT').upper()}
             numberings[n.get('id')]=levels
     return props,numberings
 
@@ -177,7 +215,7 @@ def detect(units,files):
     notes=[]
     for i,u in enumerate(units):
         ns=own_notes(u.node)
-        if len(ns)!=1 or not quick_answer(ns[0]):continue
+        if len(ns)!=1 or not note_at_start(u.node,ns[0]):continue
         visible=visible_text(u.node).strip();mark=prefix(u.node)
         try:number=int(ns[0].get('number','0'))
         except ValueError:continue
@@ -196,7 +234,9 @@ def detect(units,files):
         heading=heading_props.get(u.node.get('paraPrIDRef'))
         if heading:
             nid,level=heading;key=(nid,level)
-            number=counters.get(key,numberings.get(nid,{}).get(level,1)-1)+1;counters[key]=number
+            definition=numberings.get(nid,{}).get(level,{'start':1,'format':'DIGIT'})
+            if definition['format'] not in ('DIGIT','DECIMAL','ARABIC'):continue
+            number=counters.get(key,definition['start']-1)+1;counters[key]=number
             for nested in list(counters):
                 if nested[0]==nid and nested[1]>level:del counters[nested]
             auto.append(Start(i,number,'paragraph-numbering',level=level))
@@ -207,7 +247,8 @@ def detect(units,files):
                 except ValueError:pass
     if auto:
         level=min(n.level for n in auto);outer=[n for n in auto if n.level==level]
-        if _sequence(outer) or len(outer)==1:return outer,'paragraph-numbering'
+        has_goals=all(CUES.search(' '.join(visible_text(u.node) for u in units[s.index:(outer[j+1].index if j+1<len(outer) else len(units))])) for j,s in enumerate(outer))
+        if (_sequence(outer) or len(outer)==1) and has_goals:return outer,'paragraph-numbering'
     groups=defaultdict(list)
     for candidate in plain:
         scope=(re.search(r'문제|문항|물음|서답형|서술형',candidate.label)[0] if candidate.family=='label' else '')
@@ -221,7 +262,7 @@ def detect(units,files):
         style_count=len({(units[s.index].node.get('styleIDRef'),units[s.index].node.get('paraPrIDRef')) for s in starts})
         consecutive=_sequence(starts)
         if len(starts)>=2 and (consecutive or cue_count==len(starts)) or len(starts)==1 and (cue_count or family=='label'):
-            priority={'label':4,'dot':3,'paren':2,'bracket':1}[family]
+            priority={'label':4,'math-label':4,'dot':3,'paren':2,'bracket':1}[family]
             ranked.append((priority,len(starts),-style_count,starts))
     if ranked:
         # The outer series starts first. A later "서답형 1" must not hide
@@ -252,3 +293,38 @@ def strip_prefix(blocks,label):
             break
         count=min(remaining,len(b['value']));b['value']=b['value'][count:];remaining-=count
         if not remaining:break
+
+def suggest_blocks(blocks):
+    """Offer a small set of starts from complete choice cycles / clear goals.
+
+    This is a proposal for uncertain material, not an automatic math approval.
+    """
+    from .model import plain_text,paragraphs
+    texts=[plain_text([b]).strip() for b in blocks]
+    cycles=[];expected=0;begin=None
+    for i,text in enumerate(texts):
+        for marker in re.findall('[①②③④⑤]',text):
+            value='①②③④⑤'.index(marker)
+            if value==0:expected=1;begin=i
+            elif value==expected and begin is not None:
+                expected+=1
+                if value==4:cycles.append((begin,i));begin=None;expected=0
+            else:begin=None;expected=0
+    def stem(start,end):
+        for i in range(start,end):
+            if any(b['kind']=='math' for b in paragraphs([blocks[i]])) or CUES.search(texts[i]) or re.search('다항식|방정식|복소수|이차함수|삼차함수|두실수|두 실수|다음|아래 그림',texts[i]):return i
+        return next((i for i in range(start,end) if texts[i]),start)
+    starts=[];previous=0
+    for choice_start,choice_end in cycles:
+        if choice_start>previous:starts.append(stem(previous,choice_start))
+        previous=choice_end+1
+    terminal=re.compile(r'(?:[?？]|구하시오\.?|구하여라\.?|계산하시오\.?|증명하시오\.?|나타내시오\.?|구하라\.?)\s*(?:\[[^\]]*점\])?$')
+    begin=previous
+    for i in range(previous,len(blocks)):
+        if terminal.search(texts[i]):
+            starts.append(stem(begin,i+1));begin=i+1
+    if not starts:
+        explicit=[i for i,text in enumerate(texts) if PREFIX.match(text)]
+        starts=explicit or [stem(0,len(blocks))]
+    starts=sorted(set(i for i in starts if 0<=i<len(blocks)))
+    return {'starts':starts,'reason':'완성된 객관식 보기 묶음과 질문 종결 문장을 근거로 제안했습니다.','choice_cycles':len(cycles),'requires_confirmation':True}

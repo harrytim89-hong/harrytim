@@ -19,6 +19,7 @@ def split_saved(store,qid,revision,starts):
     for index,start in enumerate(starts):
         end=starts[index+1] if index+1<len(starts) else len(blocks)
         selected=copy.deepcopy(blocks[start:end])
+        original_locations=[b['source_location'] for b in selected if b.get('source_location')]
         if not any(plain_text([b]).strip() or b['kind'] in ('image','table') for b in selected):raise ValueError('빈 문단만 포함된 문항이 있습니다.')
         text=''.join(b.get('value','') for b in selected[0].get('blocks',[]) if b['kind']=='text') if selected[0]['kind']=='paragraph' else ''
         mark=PREFIX.match(text)
@@ -30,7 +31,7 @@ def split_saved(store,qid,revision,starts):
         issues.extend({'reason':b['label']} for b in paragraphs(selected) if b['kind']=='unsupported')
         issues.extend(i for i in q['issues'] if i.get('audit'))
         classification,difficulty=classify(body,doc['metadata'])
-        locations=[b['source_location'] for b in selected if b.get('source_location')]
+        locations=original_locations
         position={'part':locations[0]['part'],'paragraph_start':locations[0]['paragraph'],'paragraph_end':locations[-1]['paragraph'],'locations':[l['path'] for l in locations]} if locations else {}
         children.append({'body':body,'source':{**q['source'],**position,'number':number or index+1,'original_points':original_points,'profile':'user-selected-boundaries','boundary_review':False,'split_from':qid,'split_revision':revision,'split_batch':batch,'block_start':start,'block_end':end,'answer_origin':None},'classification':classification,'difficulty':difficulty,'input_state':'held' if issues else 'complete','issues':issues})
     with store.transaction() as db:

@@ -199,19 +199,19 @@ def detach_original_points(blocks):
             else:break
     return points
 
-def import_document(store,path,progress=lambda *args:None,cancel=lambda:False):
+def import_document(store,path,progress=lambda *args:None,cancel=lambda:False,replace_document=None):
     path=Path(path)
     data,files,manifest,sections,audit=read_package(path)
     digest=checksum(data)
     existing=store.rows('SELECT id,trashed FROM documents WHERE hash=?',(digest,))
-    if existing:
+    if existing and not replace_document:
         return {'document_id':existing[0]['id'],'duplicate':True,'message':'같은 원본이 이미 자료실에 있습니다. 휴지통에 있다면 복구해 주세요.'}
     original=store.blob(data,'originals',path.suffix)
     memory=io.BytesIO()
     with zipfile.ZipFile(memory,'w',zipfile.ZIP_DEFLATED) as z:
         for name,value in files.items(): z.writestr(name,value)
     rendition=store.blob(memory.getvalue(),'renditions','.hwpx')
-    from .boundaries import document_units,detect,strip_prefix,Start,CUES,visible_text
+    from .boundaries import document_units,detect,strip_prefix,Start,CUES,visible_text,quick_answer
     units=document_units(sections)
     if not units:raise ValueError('본문 문단이 없는 자료입니다. 원본 파일을 확인해 주세요.')
     boundaries,profile=detect(units,files)
@@ -236,7 +236,8 @@ def import_document(store,path,progress=lambda *args:None,cancel=lambda:False):
         if re.fullmatch(r'\d학기',value):metadata['semester']=value
         if value in ('중간고사','기말고사'):metadata['exam']=value
         if value in ('공통수학1','공통수학2','대수','미적분','확률과 통계'):metadata['course']=value
-    did=identity();questions=[]
+    if replace_document and (not existing or existing[0]['id']!=replace_document):raise ValueError('원본 해시가 현재 자료와 일치하지 않아 재분리하지 않았습니다.')
+    did=replace_document or identity();questions=[]
     global_problem=bool(audit.get('unconverted') or audit.get('dropped')) or any(audit.get(k) is False for k in ('formula_preserved','text_preserved','objects_preserved'))
     for offset,boundary in enumerate(boundaries):
         start,number,note=boundary.index,boundary.number,boundary.note
@@ -252,6 +253,9 @@ def import_document(store,path,progress=lambda *args:None,cancel=lambda:False):
             for block in decoded:block['source_location']={'part':unit.part,'paragraph':unit.paragraph,'path':unit.location}
             blocks.extend(decoded)
         strip_prefix(blocks,boundary.label)
+        if boundary.family=='math-label' and blocks and blocks[0]['kind']=='paragraph':
+            first=next((b for b in blocks[0]['blocks'] if b['kind']!='text' or b['value'].strip()),None)
+            if first and first['kind']=='math' and re.fullmatch(r'\d+[.)]',re.sub(r'[`~{}\s]','',first['source'])):blocks[0]['blocks'].remove(first)
         if note is not None and blocks and blocks[0]['kind']=='paragraph':
             if re.fullmatch(r'\[서답형\s*\d+\]',plain_text(blocks[:1]).strip()):blocks.pop(0)
         boundary_issues=[{**issue,'code':'boundary_review'} for issue in boundary.issues]
@@ -263,18 +267,36 @@ def import_document(store,path,progress=lambda *args:None,cancel=lambda:False):
         issues=decoder.issues+boundary_issues+[{'reason':v} for v in choice_issues]
         if global_problem:issues.append({'reason':'HWP 변환 전후 구조 대조에서 확인이 필요합니다.','audit':audit})
         body={'blocks':blocks,'choices':choices,'answer_format':'mc' if choices else 'short'}
-        original_answer=None;original_steps=[]
+        original_answer=None;original_steps=[];original_note=None
         if note is not None:
             answer_decoder=Decoder(store,files,manifest)
             note_blocks=[b for c in note for b in answer_decoder.parse(c)]
             text=plain_text(note_blocks).strip().replace('$','')
-            original_answer=text.strip()
-            if len(text)>100 or '\n' in text: issues.append({'reason':'미주의 정답/해설 경계를 확인해 주세요.'})
+            if quick_answer(note):original_answer=text.strip()
+            elif text.strip():original_note={'blocks':note_blocks,'state':'unparsed','label':'원본 각주·미주 · 정답/해설 구분 전'}
         classification,difficulty=classify(body,metadata)
-        questions.append({'body':body,'source':{'document_id':did,'number':number,'original_points':original_points,'part':units[start].part,'paragraph_start':units[start].paragraph,'paragraph_end':units[end-1].paragraph,'locations':[u.location for u in units[start:end]],'boundary_review':bool(boundary_issues),'boundary_evidence':boundary.family,'profile':profile,'answer_origin':('original_'+local(note.tag).lower()) if original_answer else None},'classification':classification,'difficulty':difficulty,'input_state':'held' if issues else 'complete','issues':issues,'original_answer':original_answer,'original_steps':original_steps})
+        questions.append({'body':body,'source':{'document_id':did,'number':number,'original_points':original_points,'part':units[start].part,'paragraph_start':units[start].paragraph,'paragraph_end':units[end-1].paragraph,'locations':[u.location for u in units[start:end]],'boundary_review':bool(boundary_issues),'boundary_evidence':boundary.family,'profile':profile,'answer_origin':('original_'+local(note.tag).lower()) if original_answer else None,'original_note':original_note,'answer_ambiguity':bool(original_note)},'classification':classification,'difficulty':difficulty,'input_state':'held' if issues else 'complete','issues':issues,'original_answer':original_answer,'original_steps':original_steps})
         progress(offset+1,len(boundaries),f'{number if number is not None else "미분리 자료"} 문항 구조 분석')
-    report={'profile':profile,'total':len(questions),'complete':sum(q['input_state']=='complete' for q in questions),'held':sum(q['input_state']!='complete' for q in questions),'audit':audit,'formulas':sum(b['kind']=='math' for q in questions for blocks in (q['body']['blocks'],*[c for c in q['body']['choices']]) for b in paragraphs(blocks)),'answer_count':sum(bool(q['original_answer']) for q in questions),'boundary_review':sum(bool(q['source']['boundary_review']) for q in questions),'parser_version':2}
+    report={'profile':profile,'total':len(questions),'complete':sum(q['input_state']=='complete' for q in questions),'held':sum(q['input_state']!='complete' for q in questions),'audit':audit,'formulas':sum(b['kind']=='math' for q in questions for blocks in (q['body']['blocks'],*[c for c in q['body']['choices']]) for b in paragraphs(blocks)),'answer_count':sum(bool(q['original_answer']) for q in questions),'boundary_review':sum(bool(q['source']['boundary_review']) for q in questions),'parser_version':3}
+    prior=[q for q in store.questions() if q['document_id']==did] if replace_document else []
+    prior_doc=next((d for d in store.documents() if d['id']==did),None) if replace_document else None
     with store.transaction() as db:
-        db.execute('INSERT INTO documents(id,hash,name,path,rendition,metadata,report,created) VALUES(?,?,?,?,?,?,?,?)',(did,digest,path.name,original,rendition,encode(metadata),encode(report),stamp()))
-        ids=[store.insert_question(db,q,did) for q in questions]
+        if replace_document:
+            current=db.execute('SELECT id,revision FROM questions WHERE document_id=? AND trashed=0',(did,)).fetchall()
+            if {(r[0],r[1]) for r in current}!={(q['id'],q['revision']) for q in prior}:raise ValueError('자료를 분석하는 동안 문항이 변경되었습니다. 다시 실행해 주세요.')
+            from .model import body_fingerprint
+            ids=[];retained=set()
+            for q in questions:
+                matching=next((p for p in prior if p['id'] not in retained and p['fingerprint']==body_fingerprint(q['body']) and p['input_state']==q['input_state'] and p['source'].get('boundary_review')==q['source']['boundary_review']),None)
+                if matching:ids.append(matching['id']);retained.add(matching['id'])
+                else:ids.append(store.insert_question(db,q,did))
+            for q in prior:
+                if q['id'] not in retained:db.execute('UPDATE questions SET trashed=1 WHERE id=?',(q['id'],))
+            history=list(prior_doc['report'].get('repair_history',[]))
+            history.append({'created':stamp(),'before':[q['id'] for q in prior],'after':ids,'retained':list(retained),'old_report':{k:v for k,v in prior_doc['report'].items() if k!='repair_history'}})
+            report['repair_history']=history
+            db.execute('UPDATE documents SET report=?,rendition=? WHERE id=?',(encode(report),rendition,did))
+        else:
+            db.execute('INSERT INTO documents(id,hash,name,path,rendition,metadata,report,created) VALUES(?,?,?,?,?,?,?,?)',(did,digest,path.name,original,rendition,encode(metadata),encode(report),stamp()))
+            ids=[store.insert_question(db,q,did) for q in questions]
     return {'document_id':did,'question_ids':ids,**report}

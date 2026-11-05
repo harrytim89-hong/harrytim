@@ -26,8 +26,10 @@ CREATE TABLE IF NOT EXISTS exports(id TEXT PRIMARY KEY, exam_id TEXT REFERENCES 
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, targets TEXT NOT NULL, settings TEXT NOT NULL, state TEXT NOT NULL, completed INTEGER NOT NULL, total INTEGER NOT NULL, failed INTEGER NOT NULL, detail TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS job_items(job_id TEXT NOT NULL REFERENCES jobs(id), position INTEGER NOT NULL, target TEXT NOT NULL, state TEXT NOT NULL, error TEXT NOT NULL, PRIMARY KEY(job_id,position));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS text_reviews(id TEXT PRIMARY KEY,question_id TEXT NOT NULL,revision INTEGER NOT NULL,value TEXT NOT NULL,created TEXT NOT NULL,FOREIGN KEY(question_id,revision) REFERENCES versions(question_id,revision));
+CREATE TABLE IF NOT EXISTS job_documents(job_id TEXT NOT NULL REFERENCES jobs(id),document_id TEXT NOT NULL REFERENCES documents(id),PRIMARY KEY(job_id,document_id));
 CREATE INDEX IF NOT EXISTS ix_question_document ON questions(document_id);
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 '''
 
 class Store:
@@ -42,8 +44,13 @@ class Store:
         self.db.execute('PRAGMA foreign_keys=ON')
         self.db.execute('PRAGMA journal_mode=WAL')
         version = self.db.execute('PRAGMA user_version').fetchone()[0]
-        if version > 1:
+        if version > 2:
             raise ValueError('더 최신 버전에서 만든 자료실입니다. 프로그램을 업데이트해 주세요.')
+        if version==1:
+            backups=self.root/'backups';backups.mkdir(exist_ok=True)
+            target=sqlite3.connect(backups/('before-schema-2-'+identity()+'.sqlite'))
+            try:self.db.backup(target)
+            finally:target.close()
         self.db.executescript(SCHEMA)
         self.db.execute("UPDATE jobs SET state='interrupted',detail='앱 종료로 중단됨 · 재개할 수 있습니다' WHERE state IN ('running','queued')")
         if self.setting('taxonomy') is None:
@@ -125,6 +132,8 @@ class Store:
     def _decode(self,q):
         for key in ('body','source','classification','issues','original_steps','answer','lineage'):
             if q.get(key) is not None: q[key]=json.loads(q[key])
+        from .proofreading import inspect,latest
+        q['text_review']=latest(self,q['id'],q['revision']) or inspect(q['body'])
         q['available']=available(q)
         q['search_text']=plain_text(q['body']['blocks'])+' '+plain_text([{'kind':'paragraph','blocks':c} for c in q['body'].get('choices',[])])
         return q

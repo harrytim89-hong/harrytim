@@ -125,6 +125,33 @@ def test_paragraph_numbering_from_header(tmp_path):
     rewrite(path,numbered);s=Store(tmp_path/'db');r=import_document(s,path)
     assert r['complete']==2 and [q['source']['number'] for q in s.questions()]==[41,42],r
 
+def test_circled_choice_numbering_is_not_a_question_series(tmp_path):
+    path=questions(tmp_path/'choices.hwpx')
+    def format_choices(files):
+        header=E.fromstring(files['Contents/header.xml']);para=next(n for n in header.iter() if n.tag.rsplit('}',1)[-1]=='paraPr')
+        copied=copy.deepcopy(para);copied.set('id','902')
+        for n in list(copied):
+            if n.tag.rsplit('}',1)[-1]=='heading':copied.remove(n)
+        E.SubElement(copied,f'{{{HH}}}heading',type='NUMBER',idRef='902',level='0');para.getparent().append(copied)
+        refs=next(n for n in header.iter() if n.tag.rsplit('}',1)[-1]=='refList');ns=E.SubElement(refs,f'{{{HH}}}numberings');num=E.SubElement(ns,f'{{{HH}}}numbering',id='902',start='1');E.SubElement(num,f'{{{HH}}}paraHead',level='1',start='1',numFormat='CIRCLED_DIGIT').text='^1'
+        root=E.fromstring(files['Contents/section0.xml'])
+        for p in root:
+            if visible_text(p).strip().startswith(tuple('①②③④⑤')):p.set('paraPrIDRef','902')
+        files['Contents/header.xml']=E.tostring(header);files['Contents/section0.xml']=E.tostring(root)
+    rewrite(path,format_choices);s=Store(tmp_path/'db');r=import_document(s,path)
+    assert r['total']==2 and r['complete']==2
+    assert all(len(q['body']['choices'])==5 for q in s.questions())
+
+def test_question_labels_stored_as_equations(tmp_path):
+    from hwpx import HwpxDocument
+    doc=HwpxDocument.new();doc.paragraphs[0].text='수식 번호 자료'
+    for i in range(1,3):
+        p=doc.add_paragraph();p.add_equation(str(i)+'.');p.add_run('다음 식의 값을 구하시오.');p.add_equation('x+2')
+    path=tmp_path/'math-label.hwpx';doc.save_to_path(path);s=Store(tmp_path/'db');r=import_document(s,path)
+    assert r['complete']==2 and r['total']==2,r
+    assert [q['source']['number'] for q in s.questions()]==[1,2]
+    assert sum(b['kind']=='math' for q in s.questions() for b in paragraphs(q['body']['blocks']))==2
+
 def test_decimal_and_caption_are_not_question_boundaries(tmp_path):
     path=questions(tmp_path/'q.hwpx')
     def insert(files):

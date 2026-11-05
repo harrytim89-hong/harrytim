@@ -77,38 +77,60 @@ def exercise(root):
     return store,{'questions':4,'variants':2,'pdf_and_hwpx_kinds':4,'score':62.5,'backup_restored':True,'native_import':True,'boundary_review_split':True}
 
 def gui_check(store,output=None):
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication,QFileDialog
     from PySide6.QtCore import QEventLoop,QTimer
     from .desktop import Window
+    from pypdf import PdfReader
+    import zipfile
+    from xml.etree import ElementTree as XML
     app=QApplication.instance() or QApplication(['MathBankStudio-selftest'])
-    from .importers import import_document
-    review=import_document(store,store.root.parent/'review.hwpx')
-    review_id=review['question_ids'][0]
-    window=Window(store);window.show();state={'ready':False,'error':None};loop=QEventLoop();start=time.monotonic()
+    review_path=store.root.parent/'review.hwpx'
+    with zipfile.ZipFile(review_path) as z:files={n:z.read(n) for n in z.namelist()}
+    root=XML.fromstring(files['Contents/section0.xml'])
+    for n in root.iter():
+        if n.tag.rsplit('}',1)[-1]=='t' and n.text and '최댓값은?' in n.text:n.text=n.text.replace('최댓값은?','최댓값은??')
+    files['Contents/section0.xml']=XML.tostring(root)
+    with zipfile.ZipFile(review_path,'w',zipfile.ZIP_DEFLATED) as z:
+        for name,data in files.items():z.writestr(name,data)
+    exam_path=store.root.parent/'gui-exam.pdf';report_path=store.root.parent/'gui-report.pdf'
+    save_paths=iter([exam_path,report_path])
+    old_open,old_save=QFileDialog.getOpenFileNames,QFileDialog.getSaveFileName
+    QFileDialog.getOpenFileNames=lambda *a,**k:([str(review_path)],'')
+    QFileDialog.getSaveFileName=lambda *a,**k:(str(next(save_paths)),'')
+    window=Window(store);window.show();state={'ready':False,'error':None,'step':0};loop=QEventLoop();start=time.monotonic()
+    script=(Path(__file__).parent/'ui/acceptance.js').read_text(encoding='utf-8')
     def result(value):
         if isinstance(value,str):
             try:value=json.loads(value)
             except ValueError:value={}
-        if value and value.get('ready'):
+        value=value or {};state['step']=value.get('step',state['step'])
+        if value.get('error'):state['error']=value['error'];loop.quit();return
+        if value.get('ready'):
             try:
-                assert value['cards']==2 and value['count']==6 and value['nav']==7,value
-                assert value['math']>0,value
+                assert value['count']==6 and value['nav']==7 and value['math']>0,value
                 assert value['boundary_rows']>0 and value['boundary_saved']==2,value
+                assert value['guided_import'] and value['proofread_correction'],value
+                assert value['score']==10 and value['maximum']==10,value
+                assert PdfReader(exam_path).pages and PdfReader(report_path).pages
                 state['ready']=True
                 if output:window.grab().save(str(output))
             except Exception as exc:state['error']=str(exc)
             loop.quit()
-        elif time.monotonic()-start>40:state['error']='QWebChannel 화면 초기화 시간 초과';loop.quit()
+        elif time.monotonic()-start>100:state['error']='화면 전체 흐름 시간 초과 · 단계 '+str(state['step']);loop.quit()
     def check():
-        window.page.runJavaScript('JSON.stringify((()=>{if(!bridge || !data.questions.length)return {ready:false};if(!window.__boundaryStarted){if(data.questions.length!==5)return {ready:false};navigate("questions");let q=data.questions.find(q=>q.source.boundary_review);if(!q)return {ready:false};showDetail(q.id);document.querySelector("#drawer [data-action=review-boundaries]").click();window.__boundaryRows=document.querySelectorAll("[data-boundary-start]").length;for(let i=0;i<q.body.blocks.length;i++){let b=q.body.blocks[i],t=(b.blocks||[]).filter(b=>b.kind==="text").map(b=>b.value).join("").trim();if(t.startsWith("다항식 A, B의 정의")||t==="이차방정식"){let input=document.querySelector(`[data-boundary-start="${i}"]`);input.checked=true;input.dispatchEvent(new Event("change",{bubbles:true}));}}window.__boundaryStarted=true;document.querySelector("[data-action=save-boundaries]").click();return {ready:false};}if(data.questions.length!==6||!document.querySelector("#modalLayer").classList.contains("hidden"))return {ready:false};navigate("library");let cards=document.querySelectorAll(".doc-row").length;document.querySelector("[data-nav=questions]").click();return {ready:true,count:data.questions.length,nav:document.querySelectorAll("nav button").length,cards:cards,math:document.querySelectorAll("math").length,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==="user-selected-boundaries").length}})())',result)
-    timer=QTimer();timer.timeout.connect(check);timer.start(300);QTimer.singleShot(45000,loop.quit);loop.exec();timer.stop();window.close();app.processEvents()
-    if not state['ready']:raise AssertionError(state['error'] or '화면 검증 실패')
+        flags=json.dumps({'exam':exam_path.exists(),'report':report_path.exists()})
+        window.page.runJavaScript('window.__guideFiles='+flags+';JSON.stringify('+script+')',result)
+    timer=QTimer();timer.timeout.connect(check);timer.start(350);QTimer.singleShot(110000,loop.quit)
+    try:loop.exec()
+    finally:
+        timer.stop();window.close();app.processEvents();QFileDialog.getOpenFileNames=old_open;QFileDialog.getSaveFileName=old_save
+    if not state['ready']:raise AssertionError(state['error'] or '화면 검증 실패 · 단계 '+str(state['step']))
     return True
 
 def run():
     try:
         with tempfile.TemporaryDirectory(prefix='mathbank-studio-check-',ignore_cleanup_errors=True) as temp:
-            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['questions_after_gui']=len(store.questions());store.db.close()
+            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['guided_full_workflow']=True;result['gui_proofread_correction']=True;result['questions_after_gui']=len(store.questions());store.db.close()
         Path('studio-selftest.json').write_text(json.dumps({'ok':True,**result},ensure_ascii=False,indent=2),encoding='utf-8')
         return 0
     except BaseException as exc:
