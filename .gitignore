@@ -1,14 +1,12 @@
 __pycache__/
 *.py[cod]
-.venv/
 .pytest_cache/
-.env
-# Desktop build and runtime artifacts
-.build-venv/
-build/
+.venv/
+.build/
+work/
 dist/
+build/
 *.spec
-artifacts/
-*.sqlite3
-*.sqlite3-wal
-*.sqlite3-shm
+*.sqlite*
+.env
+studio-selftest.json

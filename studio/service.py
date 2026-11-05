@@ -1,0 +1,86 @@
+"""Application commands shared by desktop and integration checks."""
+from __future__ import annotations
+import base64
+import copy
+import json
+from .model import paragraphs
+from .formula import equation,mathml
+from .jobs import Jobs
+from . import assessment,ai
+
+class Service:
+    def __init__(self,store,notify=lambda:None):self.store=store;self.jobs=Jobs(store,notify)
+    def question_for_ui(self,q):
+        q=copy.deepcopy(q)
+        blocks=[q['body']['blocks'],*q['body'].get('choices',[])]
+        if q.get('answer'):
+            blocks.extend(s['blocks'] for s in q['answer'].get('steps',[]))
+        edit_index=0
+        for group in blocks:
+            for b in paragraphs(group):
+                if b['kind'] in ('math','text'):
+                    b['edit_key']=str(edit_index);edit_index+=1
+                if b['kind']=='math':b['mathml']=mathml(b['ast'])
+                if b['kind']=='image':
+                    data=self.store.path(b['path']).read_bytes();suffix=b['path'].rsplit('.',1)[-1]
+                    b['data_url']='data:image/'+('jpeg' if suffix=='jpg' else suffix)+';base64,'+base64.b64encode(data).decode()
+        return q
+    def snapshot(self):
+        return {'questions':[self.question_for_ui(q) for q in self.store.questions()], 'trash':[self.question_for_ui(q) for q in self.store.questions(True) if q['trashed']], 'documents':self.store.documents(),'students':self.store.students(),'exams':self.store.exams(),'attempts':self.store.attempts(),'jobs':self.store.rows('SELECT * FROM jobs ORDER BY created DESC LIMIT 30'),'settings':{'ai':self.store.setting('ai',{'provider':'codex','model':''}),'taxonomy':self.store.setting('taxonomy'),'root':str(self.store.root)},'version':'1.0.0'}
+    def command(self,action,args):
+        s=self.store
+        if action=='snapshot':return self.snapshot()
+        if action=='explain':return self.jobs.start('explain',args['ids'],args.get('settings',{'provider':'local'}))
+        if action=='variants':
+            targets=[]
+            for qid in args['ids']:
+                for kind,key in [('numeric','numeric'),('thinking','thinking')]:
+                    count=int(args.get(key,1))
+                    if not 0<=count<=20:raise ValueError('변형 개수는 0~20개로 지정해 주세요.')
+                    targets.extend({'id':qid,'kind':kind} for _ in range(count))
+            return self.jobs.start('variant',targets,args.get('settings',{'provider':'local'}))
+        if action=='cancel':self.jobs.cancel(args['id']);return True
+        if action=='resume':self.jobs.resume(args['id']);return True
+        if action=='retry':
+            job=s.rows('SELECT * FROM jobs WHERE id=?',(args['id'],))[0]
+            return self.jobs.start(job['kind'],json.loads(job['targets']),json.loads(job['settings']))
+        if action=='student':return s.add_student(args)
+        if action=='exam':return s.create_exam(args)
+        if action=='exam_detail':
+            exam=s.exam(args['id'])
+            for i in exam['items']:i['snapshot']=self.question_for_ui(i['snapshot'])
+            return exam
+        if action=='assign':return s.assign(args['exam_id'],args['student_ids'],args.get('absent',False))
+        if action=='grade':return assessment.grade(s,args['id'],args.get('answers',{}),args.get('manual'),args.get('absent',False))
+        if action=='report':return assessment.report(s,args['id'])
+        if action=='remediation':return assessment.remediation(s,args['id'],args.get('kind','original'))
+        if action=='trash':s.trash(args['kind'],args['id'],args.get('value',True));return True
+        if action=='favorite':
+            with s.transaction() as db:db.execute('UPDATE questions SET favorite=? WHERE id=?',(int(args['value']),args['id']))
+            return True
+        if action=='settings':
+            if args['key'] not in ('ai','taxonomy'):raise ValueError('지원하지 않는 설정입니다.')
+            s.set_setting(args['key'],args['value']);return True
+        if action=='connect':return ai.connect(args)
+        if action=='revise':
+            q=s.question(args['id']);changes={}
+            if 'difficulty' in args:
+                v=int(args['difficulty'])
+                if not 1<=v<=10:raise ValueError('난이도는 1~10입니다.')
+                changes['difficulty']=v
+            if 'classification' in args:changes['classification']={**q['classification'],**args['classification'],'certainty':'user_confirmed'}
+            if 'body' in args:
+                # A form may edit text or equation source; regenerate every math tree.
+                body=copy.deepcopy(q['body']);edits=args['body']
+                edit_index=0
+                for group in (body['blocks'],*body.get('choices',[])):
+                    for b in paragraphs(group):
+                        if b['kind'] not in ('math','text'):continue
+                        key=str(edit_index);edit_index+=1
+                        if key in edits:
+                            if b['kind']=='text':b['value']=str(edits[key])[:10000]
+                            elif b['kind']=='math':
+                                new=equation(str(edits[key]),b.get('source_format','eqedit'));b.clear();b.update(new)
+                changes['body']=body
+            return s.revise(args['id'],changes)
+        raise ValueError('지원하지 않는 명령입니다: '+action)

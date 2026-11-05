@@ -1,0 +1,60 @@
+name: MathBank Studio · Windows
+on:
+  push:
+    branches: [main, rebuild/mathbank-studio]
+    tags: ['studio-v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.lock
+      - name: Run new implementation tests
+        run: python -m pytest -q
+      - name: Build independent Windows application
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Run packaged desktop acceptance
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --disable-software-rasterizer
+        run: |
+          $p = Start-Process -FilePath ./dist/MathBankStudio/MathBankStudio.exe -ArgumentList '--self-test' -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'Packaged acceptance timed out' }
+          if ($p.ExitCode -ne 0) { Get-Content studio-selftest.json; throw 'Packaged acceptance failed' }
+          $result = Get-Content studio-selftest.json -Raw | ConvertFrom-Json
+          if (-not $result.ok -or -not $result.desktop_webchannel) { throw 'Desktop acceptance result invalid' }
+          Get-Content studio-selftest.json
+          Copy-Item studio-selftest.json dist/MathBankStudio/studio-selftest.json
+      - name: Create download archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/MathBankStudio -DestinationPath dist/MathBankStudio-1.0.0-Windows-x64.zip
+          $hash = (Get-FileHash dist/MathBankStudio-1.0.0-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  MathBankStudio-1.0.0-Windows-x64.zip" | Set-Content dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MathBankStudio-Windows-x64
+          path: |
+            dist/MathBankStudio-1.0.0-Windows-x64.zip
+            dist/SHA256SUMS.txt
+            studio-selftest.json
+      - name: Publish direct Windows download
+        if: startsWith(github.ref, 'refs/tags/studio-v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME dist/MathBankStudio-1.0.0-Windows-x64.zip dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title 'MathBank Studio 1.0.0 · 새 독립 프로그램' --notes-file docs/RELEASE.md --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release failed' }
