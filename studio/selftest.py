@@ -19,7 +19,7 @@ def exercise(root):
     source=make_fixture(root/'source.hwpx',notes=True)
     native_fixture(source,root/'source.hwp')
     store=Store(root/'workspace');result=import_document(store,source)
-    assert result['total']==2 and result['complete']==2 and result['answer_count']==2,result
+    assert result['total']==2 and result['complete']==2 and result['answer_count']==2,{'report':result,'issues':[q['issues'] for q in store.questions()]}
     assert import_document(store,source)['duplicate']
     native=Store(root/'native-workspace');nr=import_document(native,root/'source.hwp')
     assert nr['total']==2 and nr['audit']['formula_preserved'],nr
@@ -82,7 +82,7 @@ def gui_check(store,output=None):
 
 def run():
     try:
-        with tempfile.TemporaryDirectory(prefix='mathbank-studio-check-') as temp:
+        with tempfile.TemporaryDirectory(prefix='mathbank-studio-check-',ignore_cleanup_errors=True) as temp:
             store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);store.db.close()
         Path('studio-selftest.json').write_text(json.dumps({'ok':True,**result},ensure_ascii=False,indent=2),encoding='utf-8')
         return 0

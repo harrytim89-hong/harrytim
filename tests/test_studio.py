@@ -65,6 +65,12 @@ def test_unknown_semantics_hold(workspace):
     q=workspace.questions()[0];q['body']={'blocks':[{'kind':'paragraph','blocks':[{'kind':'text','value':'새 유형: 모든 실수의 성질을 증명하시오.'}]}],'choices':[],'answer_format':'short'}
     q['fingerprint']=body_fingerprint(q['body']);assert check_question(q)['verification']=='held'
 
+def test_unrecognized_extra_condition_cannot_be_ignored(workspace):
+    q=workspace.questions()[0]
+    q['body']['blocks'].append({'kind':'paragraph','blocks':[{'kind':'text','value':'추가로 x는 양수이며 y는 음수이다.'}]})
+    q['fingerprint']=body_fingerprint(q['body'])
+    assert check_question(q)['verification']=='held'
+
 @pytest.mark.parametrize('formula,expected',[('(x-3)^2','x^2-6x+9'),('{1} over {(x_{1})^2}','x_1^(-2)'),('sqrt{-3}sqrt{-12}','-6'),('2x^2-x y+3y^2','2x^2-xy+3y^2')])
 def test_formula_semantics(formula,expected):
     if 'x_1' in expected:assert str(parse(formula))=='x_1**(-2)'

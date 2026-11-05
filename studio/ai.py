@@ -62,7 +62,14 @@ def request(settings,prompt,cancel=lambda:False):
                     except subprocess.TimeoutExpired:process.kill()
                     raise InterruptedError('AI 작업을 취소했습니다.' if cancel() else 'AI 응답 시간 제한을 초과했습니다. 연결과 모델을 확인해 주세요.')
                 time.sleep(0.15)
-        if process.returncode!=0 or not output.exists():raise ValueError('Codex 응답에 실패했습니다. CLI 로그인·모델 이름·계정 사용 한도를 확인해 주세요.')
+        if process.returncode!=0 or not output.exists():
+            diagnostic=log.read_text(encoding='utf-8',errors='replace').lower()
+            if 'read-only file system' in diagnostic:reason='CLI가 실행 기록을 저장할 폴더에 쓰기 권한이 없습니다. CLI 설정 폴더의 권한을 확인해 주세요.'
+            elif 'unauthorized' in diagnostic or '401' in diagnostic:reason='CLI 인증이 만료되었습니다. codex login을 다시 실행해 주세요.'
+            elif 'rate limit' in diagnostic or 'quota' in diagnostic:reason='CLI 계정의 사용 한도에 도달했습니다.'
+            elif 'model' in diagnostic and ('not found' in diagnostic or 'unsupported' in diagnostic):reason='이 계정에서 사용할 수 없는 모델입니다. 모델 이름을 확인해 주세요.'
+            else:reason='CLI 로그인·모델 이름·네트워크·계정 사용 한도를 확인해 주세요.'
+            raise ValueError('Codex 응답에 실패했습니다. '+reason)
         if output.stat().st_size>1_000_000:raise ValueError('AI 응답 크기를 초과했습니다.')
         return json.loads(output.read_text(encoding='utf-8'))
 

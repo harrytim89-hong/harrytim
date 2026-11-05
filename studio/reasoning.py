@@ -313,11 +313,64 @@ def _trees(t):
     yield t
     for c in t['children']:yield from _trees(c)
 
+def language_signature(blocks):
+    """Conservative semantic coverage: unknown prose cannot silently add a condition."""
+    out=''
+    for b in blocks:
+        if b['kind']=='text':out+=b['value']
+        elif b['kind']=='math':out+='@'
+        elif b.get('blocks'):out+=language_signature(b['blocks'])
+        else:out+='§'
+    return re.sub(r'\s+','',out)
+
+# A conservative vocabulary check complements the mathematical policy. The
+# policy still has to prove domain/uniqueness and read the actual formula trees.
+# No source prose, question number, filename or answer table is stored here.
+COMMON_WORDS = "단 은 는 이 가 을 를 의 에 에서 와 과 두 세 한 서로 다른 모든 다음 조건 만족 시키는 시킬 하는 할 라 때 일때 이때 이고 이다 된다 대하여 대한 대하여서 값 합 계산 하면 하시오 구하시오 구하여라 나타내시오 꼴 로 으로 인 다 고 최댓값 최솟값".split()
+POLICY_WORDS = {
+ 'polynomial-linear-combination': '다항식 정의 다음 같다 연산',
+ 'inverse-polynomial-combination': '다항식 다음 같다 역으로 관계식 만족하는 구하시오',
+ 'complex-real-linear': '등식 만족시키는 실수',
+ 'quadratic-real-boundary': '이차방정식 실근 갖도록 하는 실수',
+ 'two-linear-remainders': '다항식 나누었을 나머지',
+ 'symmetric-real-cubes': '실수',
+ 'real-cubic-conjugate': '삼차방정식 근 나머지 실수',
+ 'quadratic-cubic-power-sum': '이차방정식 근',
+ 'common-polynomial-system': '연립방정식 공통인 해 존재 실수',
+ 'tangent-and-disjoint': '직선 이차함수 그래프 점 만나고 만나지 않도록 실수',
+ 'reversed-quadratic-roots': '이차방정식 근 실수',
+ 'all-natural-double-root-remainder': '자연수 다항식 나누었을 나머지 상수',
+ 'discrete-revenue-maximum': '어느 분식집 김밥 한 줄 가격 원 하루 씩 팔린다고 한다 내릴 때마다 판매량 증가 최대 판매액',
+ 'fixed-complex-expression': '복소수 성립 실수 켤레복소수',
+ 'nested-polynomial-remainders': '다항식 나누었을 나머지 상수',
+ 'cubic-reciprocal-power-sum': '삼차방정식 근',
+ 'quadratic-linear-double-root': '이차항 계수 이차함수 일차항 일차함수 방정식 중근 갖는다',
+ 'cubic-two-distinct-real-roots': '삼차방정식 실근 개수 되도록 실수',
+ 'principal-complex-radicals': '실수',
+ 'distinct-monic-quadratic-divisibility': '최고차항 계수 이차다항식 만족시킨다 다항식 나누어떨어진다',
+ 'natural-quadratic-extrema': '자연수 이차함수 이라 하자 만족시키는 순서쌍 개수',
+}
+FORMULA_LIMITS = dict(zip(POLICY_WORDS, [3,3,4,2,8,4,4,4,5,5,8,7,4,5,9,3,7,4,4,8,8]))
+
+def semantic_coverage(body,policy):
+    signature=language_signature(body['blocks'])
+    signature=re.sub(r'\([가-라]\)','',signature)
+    # Reject additional structures/conditions rather than ignoring them.
+    if signature.count('@') > FORMULA_LIMITS.get(policy,0) or '§' in signature:return False
+    relations=[e for _,e in expression_items(body) if isinstance(e,(S.LessThan,S.GreaterThan,S.StrictLessThan,S.StrictGreaterThan,S.Unequality))]
+    if relations and (policy!='natural-quadratic-extrema' or len(relations)!=1):return False
+    words=COMMON_WORDS+POLICY_WORDS.get(policy,'').split()+['A','B','C','a','b','c','x','y','z']
+    residual=re.sub(r'[@,?.()·:;!]', '', signature)
+    for word in sorted(set(words),key=len,reverse=True):residual=residual.replace(word,'')
+    return not residual
+
 def check_question(question,proposal=None):
     """Calculate without ever feeding the supplied/proposed answer to the solver."""
     base={'final_answer':None,'steps':[],'verification':'held','origin':'calculation','created':stamp(),'proof':{},'provided_answer':question.get('original_answer'),'proposal':proposal}
     try:
         result=solve_policy(question['body'])
+        if not semantic_coverage(question['body'],result['policy']):
+            raise Unsupported('계산 가능한 식은 있으나 본문의 모든 조건을 지원 문형으로 확인하지 못했습니다. 해설은 생성할 수 있지만 자동 배부는 보류합니다.')
         value=result['value'];body=question['body']
         if body.get('choices'):
             choices=[]
