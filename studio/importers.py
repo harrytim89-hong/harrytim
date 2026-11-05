@@ -84,9 +84,9 @@ def read_package(path):
     return data,files,manifest,sections,audit
 
 class Decoder:
-    def __init__(self,store,files,manifest,answer_notes=False):
+    def __init__(self,store,files,manifest,answer_notes=()):
         self.store,self.files,self.manifest=store,files,manifest
-        self.answer_notes=answer_notes;self.issues=[]
+        self.answer_notes={id(n) for n in answer_notes};self.issues=[]
 
     def issue(self,node,reason):
         self.issues.append({'reason':reason,'object':local(node.tag),'id':node.get('id')})
@@ -110,7 +110,7 @@ class Decoder:
             children=[b for c in node if local(c.tag)=='run' for b in self.parse(c)]
             return [{'kind':'paragraph','blocks':children,'style':node.get('styleIDRef'),'paragraph_id':node.get('id')}] if children else []
         if tag in ('endNote','footNote'):
-            if self.answer_notes: return []
+            if id(node) in self.answer_notes: return []
             return [{'kind':'note','number':node.get('number'),'blocks':[b for c in node for b in self.parse(c)]}]
         if tag=='tbl':
             rows=[]
@@ -211,32 +211,20 @@ def import_document(store,path,progress=lambda *args:None,cancel=lambda:False):
     with zipfile.ZipFile(memory,'w',zipfile.ZIP_DEFLATED) as z:
         for name,value in files.items(): z.writestr(name,value)
     rendition=store.blob(memory.getvalue(),'renditions','.hwpx')
-    source_paragraphs=[(part,index,p) for part,root in sections for index,p in enumerate(root) if local(p.tag)=='p']
-    anchors=[]
-    for i,(_,_,p) in enumerate(source_paragraphs):
-        notes=elements(p,'endNote')
-        if len(notes)!=1:continue
-        # Only a standalone anchor; a normal prose endnote is never a question boundary.
-        outside=''.join(n.text or '' for run in p if local(run.tag)=='run' for n in run if local(n.tag)=='t').strip()
-        if not outside or re.fullmatch(r'\[서답형\s*\d+\]',outside):
-            anchors.append((i,int(notes[0].get('number','0')),notes[0]))
-    all_text=''.join(node_text(root) for _,root in sections)
-    note_profile=len(anchors)>=2 and [a[1] for a in anchors]==list(range(1,len(anchors)+1)) and all(m in all_text for m in MARKERS)
-    if note_profile:
-        boundaries=anchors;profile='standalone-sequential-answer-endnotes'
-    else:
-        candidates=[]
-        for i,(_,_,p) in enumerate(source_paragraphs):
-            # Remove notes before looking for a leading number; decimal answers are not prefixes.
-            text=''.join(n.text or '' for run in p if local(run.tag)=='run' for n in run if local(n.tag)=='t')
-            match=re.match(r'^\s*(\d{1,3})[.)]\s+',text)
-            auto=[n for n in elements(p,'autoNum') if n.get('numType') not in ('PAGE','ENDNOTE','FOOTNOTE')]
-            if match or auto: candidates.append((i,int(match[1]) if match else int(auto[0].get('num','0')),None))
-        valid=len(candidates)>=2 and [a[1] for a in candidates]==list(range(1,len(candidates)+1))
-        if not valid: raise ValueError('문항 경계를 안전하게 확인하지 못했습니다. 문항 첫 문단을 “1. ”, “2. ”처럼 연속 번호로 지정한 HWPX로 저장해 주세요. 원본은 변경하지 않았습니다.')
-        styles=[(source_paragraphs[a[0]][2].get('styleIDRef'),source_paragraphs[a[0]][2].get('paraPrIDRef')) for a in candidates]
-        boundaries=candidates;profile='sequential-numbered-paragraphs'
-        if len(set(styles))>1: profile+='-mixed-styles'
+    from .boundaries import document_units,detect,strip_prefix,Start,CUES,visible_text
+    units=document_units(sections)
+    if not units:raise ValueError('본문 문단이 없는 자료입니다. 원본 파일을 확인해 주세요.')
+    boundaries,profile=detect(units,files)
+    if profile=='boundary-review':
+        expanded=document_units(sections,review=True)
+        if len(expanded)>len(units):
+            units=expanded;boundaries,profile=detect(units,files)
+    first=boundaries[0].index
+    if first:
+        pre=units[:first];text=' '.join(visible_text(u.node) for u in pre)
+        if text.count('⑤') or CUES.search(text) and any(elements(u.node,'equation') for u in pre):
+            boundaries.insert(0,Start(0,None,'unnumbered-prefix',issues=[{'reason':'번호가 있는 문항 앞에 미분리 본문이 있어 원문을 함께 저장했습니다. 문항 나누기에서 확인해 주세요.','code':'boundary_review'}]))
+    selected_notes=[start.note for start in boundaries if start.note is not None]
     header_text=[]
     for _,root in sections:
         for head in elements(root,'header'): header_text.extend((n.text or '').strip() for n in elements(head,'t') if n.text)
@@ -250,37 +238,42 @@ def import_document(store,path,progress=lambda *args:None,cancel=lambda:False):
         if value in ('공통수학1','공통수학2','대수','미적분','확률과 통계'):metadata['course']=value
     did=identity();questions=[]
     global_problem=bool(audit.get('unconverted') or audit.get('dropped')) or any(audit.get(k) is False for k in ('formula_preserved','text_preserved','objects_preserved'))
-    for offset,(start,number,note) in enumerate(boundaries):
+    for offset,boundary in enumerate(boundaries):
+        start,number,note=boundary.index,boundary.number,boundary.note
         if cancel(): raise InterruptedError('가져오기를 취소했습니다. 저장된 문항은 없습니다.')
-        end=boundaries[offset+1][0] if offset+1<len(boundaries) else len(source_paragraphs)
-        decoder=Decoder(store,files,manifest,note_profile)
+        end=boundaries[offset+1].index if offset+1<len(boundaries) else len(units)
+        decoder=Decoder(store,files,manifest,selected_notes)
         blocks=[]
-        for part,idx,p in source_paragraphs[start:end]:
+        for unit in units[start:end]:
+            p=unit.node
             text=node_text(p).strip()
-            if text=='정답 및 해설':break
-            blocks.extend(decoder.parse(p))
-        if not note_profile and blocks and blocks[0]['kind']=='paragraph':
-            first=blocks[0]['blocks']
-            if first and first[0]['kind']=='text': first[0]['value']=re.sub(r'^\s*\d{1,3}[.)]\s+','',first[0]['value'],count=1)
-        if note_profile and blocks and blocks[0]['kind']=='paragraph':
-            if re.fullmatch(r'\[서답형\s*\d+\]',plain_text(blocks[:1]).strip()): blocks.pop(0)
-        blocks,choices,choice_issues=choice_split(blocks)
-        original_points=detach_original_points(blocks)
-        issues=decoder.issues+[{'reason':v} for v in choice_issues]
+            if text=='정답 및 해설' and not boundary.issues:break
+            decoded=decoder.parse(p)
+            for block in decoded:block['source_location']={'part':unit.part,'paragraph':unit.paragraph,'path':unit.location}
+            blocks.extend(decoded)
+        strip_prefix(blocks,boundary.label)
+        if note is not None and blocks and blocks[0]['kind']=='paragraph':
+            if re.fullmatch(r'\[서답형\s*\d+\]',plain_text(blocks[:1]).strip()):blocks.pop(0)
+        boundary_issues=[{**issue,'code':'boundary_review'} for issue in boundary.issues]
+        if boundary_issues:
+            choices=[];choice_issues=[];original_points=None
+        else:
+            blocks,choices,choice_issues=choice_split(blocks)
+            original_points=detach_original_points(blocks)
+        issues=decoder.issues+boundary_issues+[{'reason':v} for v in choice_issues]
         if global_problem:issues.append({'reason':'HWP 변환 전후 구조 대조에서 확인이 필요합니다.','audit':audit})
-        if 'mixed-styles' in profile: issues.append({'reason':'문항 첫 문단의 스타일이 서로 달라 경계를 확인해 주세요.'})
         body={'blocks':blocks,'choices':choices,'answer_format':'mc' if choices else 'short'}
         original_answer=None;original_steps=[]
         if note is not None:
-            answer_decoder=Decoder(store,files,manifest,False)
+            answer_decoder=Decoder(store,files,manifest)
             note_blocks=[b for c in note for b in answer_decoder.parse(c)]
             text=plain_text(note_blocks).strip().replace('$','')
             original_answer=text.strip()
             if len(text)>100 or '\n' in text: issues.append({'reason':'미주의 정답/해설 경계를 확인해 주세요.'})
         classification,difficulty=classify(body,metadata)
-        questions.append({'body':body,'source':{'document_id':did,'number':number,'original_points':original_points,'part':source_paragraphs[start][0],'paragraph_start':source_paragraphs[start][1],'paragraph_end':source_paragraphs[end-1][1],'profile':profile,'answer_origin':'original_endnote' if original_answer else None},'classification':classification,'difficulty':difficulty,'input_state':'held' if issues else 'complete','issues':issues,'original_answer':original_answer,'original_steps':original_steps})
-        progress(offset+1,len(boundaries),f'{number}번 문항 구조 분석')
-    report={'profile':profile,'total':len(questions),'complete':sum(q['input_state']=='complete' for q in questions),'held':sum(q['input_state']!='complete' for q in questions),'audit':audit,'formulas':sum(b['kind']=='math' for q in questions for blocks in (q['body']['blocks'],*[c for c in q['body']['choices']]) for b in paragraphs(blocks)),'answer_count':sum(bool(q['original_answer']) for q in questions)}
+        questions.append({'body':body,'source':{'document_id':did,'number':number,'original_points':original_points,'part':units[start].part,'paragraph_start':units[start].paragraph,'paragraph_end':units[end-1].paragraph,'locations':[u.location for u in units[start:end]],'boundary_review':bool(boundary_issues),'boundary_evidence':boundary.family,'profile':profile,'answer_origin':('original_'+local(note.tag).lower()) if original_answer else None},'classification':classification,'difficulty':difficulty,'input_state':'held' if issues else 'complete','issues':issues,'original_answer':original_answer,'original_steps':original_steps})
+        progress(offset+1,len(boundaries),f'{number if number is not None else "미분리 자료"} 문항 구조 분석')
+    report={'profile':profile,'total':len(questions),'complete':sum(q['input_state']=='complete' for q in questions),'held':sum(q['input_state']!='complete' for q in questions),'audit':audit,'formulas':sum(b['kind']=='math' for q in questions for blocks in (q['body']['blocks'],*[c for c in q['body']['choices']]) for b in paragraphs(blocks)),'answer_count':sum(bool(q['original_answer']) for q in questions),'boundary_review':sum(bool(q['source']['boundary_review']) for q in questions),'parser_version':2}
     with store.transaction() as db:
         db.execute('INSERT INTO documents(id,hash,name,path,rendition,metadata,report,created) VALUES(?,?,?,?,?,?,?,?)',(did,digest,path.name,original,rendition,encode(metadata),encode(report),stamp()))
         ids=[store.insert_question(db,q,did) for q in questions]

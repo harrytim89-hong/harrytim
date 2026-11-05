@@ -35,7 +35,7 @@ class Jobs:
             db.execute('UPDATE jobs SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),jid))
         self.notify()
     def _run(self,jid,event):
-        row=self.store.rows('SELECT * FROM jobs WHERE id=?',(jid,))[0];targets=json.loads(row['targets']);settings=json.loads(row['settings']);completed=row['completed'];failed=row['failed'];errors=[]
+        row=self.store.rows('SELECT * FROM jobs WHERE id=?',(jid,))[0];targets=json.loads(row['targets']);settings=json.loads(row['settings']);completed=row['completed'];failed=row['failed'];errors=[];saved_held=0;messages=[]
         try:
             self._update(jid,state='running',detail='작업 시작')
             for index in range(completed,len(targets)):
@@ -44,10 +44,14 @@ class Jobs:
                 item_error=''
                 try:
                     if row['kind']=='import':
-                        import_document(self.store,target,lambda count,total,detail:self._update(jid,detail=f'{index+1}/{len(targets)} 파일 · {count}/{total}문항 · {detail}'),event.is_set)
+                        imported=import_document(self.store,target,lambda count,total,detail:self._update(jid,detail=f'{index+1}/{len(targets)} 파일 · {count}/{total}문항 · {detail}'),event.is_set)
+                        saved_held+=imported.get('held',0)
+                        if imported.get('boundary_review'):messages.append('원문 저장 완료 · 문항검색에서 문항 나누기로 경계를 확인해 주세요.')
+                        elif imported.get('duplicate'):messages.append(imported['message'])
                     elif row['kind']=='explain':
                         q=self.store.question(target)
                         if not q:raise ValueError('문항이 없습니다.')
+                        if q['source'].get('boundary_review'):raise ValueError('문항 나누기에서 시작 문단을 선택한 뒤 정답·해설을 생성해 주세요.')
                         self._update(jid,detail=f'{index+1}/{len(targets)} · 별도 풀이와 필수 검사')
                         proposal=None
                         if settings.get('provider','local')!='local':proposal=ai.explain(q,settings,event.is_set)
@@ -68,7 +72,7 @@ class Jobs:
                     db.execute('INSERT INTO job_items VALUES(?,?,?,?,?) ON CONFLICT(job_id,position) DO UPDATE SET state=excluded.state,error=excluded.error',(jid,index,encode(target),'failed' if item_error else 'completed',item_error))
                 completed=index+1
                 self._update(jid,completed=completed,failed=failed,detail=(item_error or f'{completed}/{len(targets)} 처리 완료'))
-            self._update(jid,state='completed',detail=f'{completed}건 처리 · 보류/실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ''))
+            self._update(jid,state='completed',detail=f'{completed}개 파일 처리 · 저장 보류 {saved_held}문항 · 실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ' · '+messages[-1] if messages else '') if row['kind']=='import' else f'{completed}건 처리 · 보류/실패 {failed}건'+(' · '+errors[-1]['reason'] if errors else ''))
         except InterruptedError as exc:self._update(jid,state='cancelled',detail=str(exc))
         except Exception as exc:self._update(jid,state='failed',detail=str(exc)[:500])
         finally:self.stops.pop(jid,None);self.notify()

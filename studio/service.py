@@ -7,6 +7,7 @@ from .model import paragraphs
 from .formula import equation,mathml
 from .jobs import Jobs
 from . import assessment,ai
+from . import VERSION
 
 class Service:
     def __init__(self,store,notify=lambda:None):self.store=store;self.jobs=Jobs(store,notify)
@@ -29,10 +30,13 @@ class Service:
                     b['data_url']='data:image/'+('jpeg' if suffix=='jpg' else suffix)+';base64,'+base64.b64encode(data).decode()
         return q
     def snapshot(self):
-        return {'questions':[self.question_for_ui(q) for q in self.store.questions()], 'trash':[self.question_for_ui(q) for q in self.store.questions(True) if q['trashed']], 'documents':self.store.documents(),'students':self.store.students(),'exams':self.store.exams(),'attempts':self.store.attempts(),'jobs':self.store.rows('SELECT * FROM jobs ORDER BY created DESC LIMIT 30'),'settings':{'ai':self.store.setting('ai',{'provider':'codex','model':''}),'taxonomy':self.store.setting('taxonomy'),'root':str(self.store.root)},'version':'1.0.0'}
+        return {'questions':[self.question_for_ui(q) for q in self.store.questions()], 'trash':[self.question_for_ui(q) for q in self.store.questions(True) if q['trashed']], 'documents':self.store.documents(),'students':self.store.students(),'exams':self.store.exams(),'attempts':self.store.attempts(),'jobs':self.store.rows('SELECT * FROM jobs ORDER BY created DESC LIMIT 30'),'settings':{'ai':self.store.setting('ai',{'provider':'codex','model':''}),'taxonomy':self.store.setting('taxonomy'),'root':str(self.store.root)},'version':VERSION}
     def command(self,action,args):
         s=self.store
         if action=='snapshot':return self.snapshot()
+        if action=='split_boundaries':
+            from .splitting import split_saved
+            return split_saved(s,args['id'],args['revision'],args['starts'])
         if action=='explain':return self.jobs.start('explain',args['ids'],args.get('settings',{'provider':'local'}))
         if action=='variants':
             targets=[]

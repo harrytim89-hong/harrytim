@@ -24,6 +24,27 @@ def exercise(root):
     native=Store(root/'native-workspace');nr=import_document(native,root/'source.hwp')
     assert nr['total']==2 and nr['audit']['formula_preserved'],nr
     assert len(native.questions())==2
+    # Reproduce the 1.0.0 boundary failure inside the frozen EXE as well.
+    import zipfile
+    from xml.etree import ElementTree as XML
+    from .splitting import split_saved
+    from .model import plain_text
+    review_source=make_fixture(root/'review.hwpx',notes=False)
+    with zipfile.ZipFile(review_source) as z:files={n:z.read(n) for n in z.namelist()}
+    xml=XML.fromstring(files['Contents/section0.xml'])
+    for node in xml.iter():
+        if node.tag.rsplit('}',1)[-1]=='t' and node.text in ('1. ','2. '):node.text=''
+    files['Contents/section0.xml']=XML.tostring(xml)
+    with zipfile.ZipFile(review_source,'w',zipfile.ZIP_DEFLATED) as z:
+        for name,data in files.items():z.writestr(name,data)
+    review_store=Store(root/'review-workspace');review=import_document(review_store,review_source)
+    assert review['boundary_review']==1 and review['held']==1,review
+    bundle=review_store.questions()[0]
+    starts=[i for i,b in enumerate(bundle['body']['blocks']) if plain_text([b]).strip().startswith('다항식 A, B의 정의') or plain_text([b]).strip()=='이차방정식']
+    split=split_saved(review_store,bundle['id'],bundle['revision'],starts)
+    assert split['total']==2 and split['complete']==2,split
+    assert all(check_question(q)['verification']=='passed' for q in review_store.questions())
+    review_store.db.close()
     original=store.questions()
     for q in original:
         answer=check_question(q);assert answer['verification']=='passed',answer
@@ -53,13 +74,16 @@ def exercise(root):
     archive=root/'backup.zip';store.backup(archive);restored=Store.restore(archive,root/'restored');check=Store(restored)
     assert len(check.questions())==4 and report(check,aid)['score']==62.5
     native.db.close();check.db.close()
-    return store,{'questions':4,'variants':2,'pdf_and_hwpx_kinds':4,'score':62.5,'backup_restored':True,'native_import':True}
+    return store,{'questions':4,'variants':2,'pdf_and_hwpx_kinds':4,'score':62.5,'backup_restored':True,'native_import':True,'boundary_review_split':True}
 
 def gui_check(store,output=None):
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QEventLoop,QTimer
     from .desktop import Window
     app=QApplication.instance() or QApplication(['MathBankStudio-selftest'])
+    from .importers import import_document
+    review=import_document(store,store.root.parent/'review.hwpx')
+    review_id=review['question_ids'][0]
     window=Window(store);window.show();state={'ready':False,'error':None};loop=QEventLoop();start=time.monotonic()
     def result(value):
         if isinstance(value,str):
@@ -67,15 +91,16 @@ def gui_check(store,output=None):
             except ValueError:value={}
         if value and value.get('ready'):
             try:
-                assert value['cards']==1 and value['count']==4 and value['nav']==7,value
+                assert value['cards']==2 and value['count']==6 and value['nav']==7,value
                 assert value['math']>0,value
+                assert value['boundary_rows']>0 and value['boundary_saved']==2,value
                 state['ready']=True
                 if output:window.grab().save(str(output))
             except Exception as exc:state['error']=str(exc)
             loop.quit()
         elif time.monotonic()-start>40:state['error']='QWebChannel 화면 초기화 시간 초과';loop.quit()
     def check():
-        window.page.runJavaScript('JSON.stringify((()=>{if(!bridge || data.questions.length!==4)return {ready:false};navigate("library");let cards=document.querySelectorAll(".doc-row").length;document.querySelector("[data-nav=questions]").click();return {ready:true,count:data.questions.length,nav:document.querySelectorAll("nav button").length,cards:cards,math:document.querySelectorAll("math").length}})())',result)
+        window.page.runJavaScript('JSON.stringify((()=>{if(!bridge || !data.questions.length)return {ready:false};if(!window.__boundaryStarted){if(data.questions.length!==5)return {ready:false};navigate("questions");let q=data.questions.find(q=>q.source.boundary_review);if(!q)return {ready:false};showDetail(q.id);document.querySelector("#drawer [data-action=review-boundaries]").click();window.__boundaryRows=document.querySelectorAll("[data-boundary-start]").length;for(let i=0;i<q.body.blocks.length;i++){let b=q.body.blocks[i],t=(b.blocks||[]).filter(b=>b.kind==="text").map(b=>b.value).join("").trim();if(t.startsWith("다항식 A, B의 정의")||t==="이차방정식"){let input=document.querySelector(`[data-boundary-start="${i}"]`);input.checked=true;input.dispatchEvent(new Event("change",{bubbles:true}));}}window.__boundaryStarted=true;document.querySelector("[data-action=save-boundaries]").click();return {ready:false};}if(data.questions.length!==6||!document.querySelector("#modalLayer").classList.contains("hidden"))return {ready:false};navigate("library");let cards=document.querySelectorAll(".doc-row").length;document.querySelector("[data-nav=questions]").click();return {ready:true,count:data.questions.length,nav:document.querySelectorAll("nav button").length,cards:cards,math:document.querySelectorAll("math").length,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==="user-selected-boundaries").length}})())',result)
     timer=QTimer();timer.timeout.connect(check);timer.start(300);QTimer.singleShot(45000,loop.quit);loop.exec();timer.stop();window.close();app.processEvents()
     if not state['ready']:raise AssertionError(state['error'] or '화면 검증 실패')
     return True
@@ -83,7 +108,7 @@ def gui_check(store,output=None):
 def run():
     try:
         with tempfile.TemporaryDirectory(prefix='mathbank-studio-check-',ignore_cleanup_errors=True) as temp:
-            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);store.db.close()
+            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['questions_after_gui']=len(store.questions());store.db.close()
         Path('studio-selftest.json').write_text(json.dumps({'ok':True,**result},ensure_ascii=False,indent=2),encoding='utf-8')
         return 0
     except BaseException as exc:

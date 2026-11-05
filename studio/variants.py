@@ -29,6 +29,7 @@ def local_variant(parent,kind):
 def generate(store,qid,kind,settings,job_key,cancel=lambda:False):
     parent=store.question(qid)
     if not parent or parent['trashed']:raise ValueError('원본 문항이 없습니다.')
+    if parent['source'].get('boundary_review'):raise ValueError('문항 나누기에서 경계를 확정한 뒤 변형을 생성해 주세요.')
     existing=store.rows('SELECT child_id,value FROM lineage WHERE parent_id=? AND kind=?',(qid,kind))
     import json
     for e in existing:

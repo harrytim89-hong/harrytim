@@ -6,7 +6,7 @@ Windows 개인 수학 문제은행을 **빈 프로젝트에서 새로 구현한 
 
 문제 HWPX/HWP → 구조화 문항 → 별도 정답·해설 생성과 검증 → 숫자·사고변형 → 학생별 시험 → PDF/HWPX → 채점·오답 과제·성적표를 로컬 SQLite 자료실에서 연결합니다.
 
-다운로드는 [Releases](https://github.com/harrytim89-hong/harrytim/releases)에서 `MathBankStudio-1.0.0-Windows-x64.zip`을 받으세요. 압축 전체를 풀고 `MathBankStudio.exe`를 실행합니다. Python·한글 설치 없이 일반 PDF 출력과 채점이 동작합니다.
+다운로드는 [Releases](https://github.com/harrytim89-hong/harrytim/releases)에서 `MathBankStudio-1.0.1-Windows-x64.zip`을 받으세요. 압축 전체를 풀고 `MathBankStudio.exe`를 실행합니다. Python·한글 설치 없이 일반 PDF 출력과 채점이 동작합니다.
 
 - [한국어 사용 설명](docs/사용설명.md)
 - [지원 범위와 검증 한계](docs/SUPPORT.md)

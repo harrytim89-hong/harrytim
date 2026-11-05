@@ -21,6 +21,12 @@ jobs:
         run: python -m pip install -r requirements.lock
       - name: Run new implementation tests
         run: python -m pytest -q
+      - name: Read application version
+        shell: pwsh
+        run: |
+          $StudioVersion = python -c "from studio import VERSION; print(VERSION)"
+          if ($StudioVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid application version' }
+          "STUDIO_VERSION=$StudioVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build independent Windows application
         shell: pwsh
         run: ./scripts/build_windows.ps1
@@ -40,14 +46,15 @@ jobs:
       - name: Create download archive
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/MathBankStudio -DestinationPath dist/MathBankStudio-1.0.0-Windows-x64.zip
-          $hash = (Get-FileHash dist/MathBankStudio-1.0.0-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  MathBankStudio-1.0.0-Windows-x64.zip" | Set-Content dist/SHA256SUMS.txt
+          $Archive = "dist/MathBankStudio-${env:STUDIO_VERSION}-Windows-x64.zip"
+          Compress-Archive -Path dist/MathBankStudio -DestinationPath $Archive
+          $hash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $Archive -Leaf)" | Set-Content dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: MathBankStudio-Windows-x64
           path: |
-            dist/MathBankStudio-1.0.0-Windows-x64.zip
+            dist/MathBankStudio-*-Windows-x64.zip
             dist/SHA256SUMS.txt
             studio-selftest.json
       - name: Publish direct Windows download
@@ -56,5 +63,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create $env:GITHUB_REF_NAME dist/MathBankStudio-1.0.0-Windows-x64.zip dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title 'MathBank Studio 1.0.0 · 새 독립 프로그램' --notes-file docs/RELEASE.md --latest
+          $Archive = "dist/MathBankStudio-${env:STUDIO_VERSION}-Windows-x64.zip"
+          gh release create $env:GITHUB_REF_NAME $Archive dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MathBank Studio ${env:STUDIO_VERSION} · 문항 가져오기 수정" --notes-file docs/RELEASE.md --latest
           if ($LASTEXITCODE -ne 0) { throw 'Release failed' }
