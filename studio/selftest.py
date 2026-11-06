@@ -110,6 +110,7 @@ def gui_check(store,output=None):
                 assert value['count']==6 and value['nav']==7 and value['math']>0,value
                 assert value['boundary_rows']>0 and value['boundary_saved']==2,value
                 assert value['guided_import'] and value['proofread_correction'],value
+                assert value['unit_navigation'] and value['question_classification'],value
                 assert value['score']==10 and value['maximum']==10,value
                 assert PdfReader(exam_path).pages and PdfReader(report_path).pages
                 state['ready']=True
@@ -130,7 +131,7 @@ def gui_check(store,output=None):
 def run():
     try:
         with tempfile.TemporaryDirectory(prefix='mathbank-studio-check-',ignore_cleanup_errors=True) as temp:
-            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['guided_full_workflow']=True;result['gui_proofread_correction']=True;result['questions_after_gui']=len(store.questions());store.db.close()
+            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['guided_full_workflow']=True;result['gui_proofread_correction']=True;result['gui_unit_navigation']=True;result['gui_question_classification']=True;result['questions_after_gui']=len(store.questions());store.db.close()
         Path('studio-selftest.json').write_text(json.dumps({'ok':True,**result},ensure_ascii=False,indent=2),encoding='utf-8')
         return 0
     except BaseException as exc:

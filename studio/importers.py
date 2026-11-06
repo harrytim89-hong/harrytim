@@ -171,17 +171,9 @@ def choice_split(blocks):
     if choices and len(choices)!=5: return blocks,[],['객관식 보기 5개를 확인하지 못했습니다.']
     return content,choices,[]
 
-def classify(body,metadata):
-    text=plain_text(body['blocks'])
-    unit='미분류';kind='미분류';difficulty=5
-    if any(w in text for w in ('다항식','나머지','이차식')): unit='다항식';kind='다항식의 연산' if '연산' in text or 'A' in text and 'B' in text else '나머지정리'
-    if any(w in text for w in ('방정식','중근','실근','최댓값','최솟값')): unit='방정식과 부등식';kind='방정식과 실근'
-    if any(w in text for w in ('복소수','허수','켤레')) or 'i =' in text and '\\sqrt' in text: unit='복소수';kind='복소수의 연산'
-    if '판매액' in text:unit='방정식과 부등식';kind='이차함수의 활용'
-    if '원기둥' in text:unit='기하';kind='입체도형의 부피'
-    if '자연수' in text:kind='정수 조건 탐색';difficulty=7
-    if body['answer_format']=='short': difficulty=7
-    return {'course':metadata.get('course','미상'),'unit':unit,'type':kind,'certainty':'suggested','basis':'본문 어휘에 의한 자동 제안'},difficulty
+def classify(body,metadata,boundary_review=False):
+    from .classification import assess
+    return assess(body,metadata.get('course','미상'),boundary_review)
 
 def detach_original_points(blocks):
     points=None
@@ -274,7 +266,7 @@ def import_document(store,path,progress=lambda *args:None,cancel=lambda:False,re
             text=plain_text(note_blocks).strip().replace('$','')
             if quick_answer(note):original_answer=text.strip()
             elif text.strip():original_note={'blocks':note_blocks,'state':'unparsed','label':'원본 각주·미주 · 정답/해설 구분 전'}
-        classification,difficulty=classify(body,metadata)
+        classification,difficulty=classify(body,metadata,bool(boundary_issues))
         questions.append({'body':body,'source':{'document_id':did,'number':number,'original_points':original_points,'part':units[start].part,'paragraph_start':units[start].paragraph,'paragraph_end':units[end-1].paragraph,'locations':[u.location for u in units[start:end]],'boundary_review':bool(boundary_issues),'boundary_evidence':boundary.family,'profile':profile,'answer_origin':('original_'+local(note.tag).lower()) if original_answer else None,'original_note':original_note,'answer_ambiguity':bool(original_note)},'classification':classification,'difficulty':difficulty,'input_state':'held' if issues else 'complete','issues':issues,'original_answer':original_answer,'original_steps':original_steps})
         progress(offset+1,len(boundaries),f'{number if number is not None else "미분리 자료"} 문항 구조 분석')
     report={'profile':profile,'total':len(questions),'complete':sum(q['input_state']=='complete' for q in questions),'held':sum(q['input_state']!='complete' for q in questions),'audit':audit,'formulas':sum(b['kind']=='math' for q in questions for blocks in (q['body']['blocks'],*[c for c in q['body']['choices']]) for b in paragraphs(blocks)),'answer_count':sum(bool(q['original_answer']) for q in questions),'boundary_review':sum(bool(q['source']['boundary_review']) for q in questions),'parser_version':3}

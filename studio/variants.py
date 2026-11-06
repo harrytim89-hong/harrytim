@@ -24,7 +24,9 @@ def local_variant(parent,kind):
         C=symbol('C');c=S.expand(a+factor*b)
         body={'blocks':[paragraph('두 다항식 A, C가 다음과 같다. 다항식 B를 역으로 구하시오.'),paragraph(S.Eq(A,a,evaluate=False)),paragraph(S.Eq(C,c,evaluate=False)),paragraph('관계식 ',S.Eq(A+factor*B,C,evaluate=False),'을 만족하는 다항식 B를 구하시오.')],'choices':[],'answer_format':'short'}
         change='선형 결합의 결과와 한 다항식을 주고 다른 다항식을 복원';purpose='순방향 대입에서 역방향 구조 파악으로 사고를 전환'
-    return {'body':body,'classification':{**parent['classification'],'type':'다항식의 역연산' if kind=='thinking' else '다항식의 연산'},'difficulty':min(10,parent['difficulty']+(kind=='thinking')),'input_state':'complete','issues':[]},change,purpose
+    from .classification import assess
+    classification,difficulty=assess(body,parent['classification'].get('course'))
+    return {'body':body,'classification':classification,'difficulty':difficulty,'input_state':'complete','issues':[]},change,purpose
 
 def generate(store,qid,kind,settings,job_key,cancel=lambda:False):
     parent=store.question(qid)
@@ -45,7 +47,8 @@ def generate(store,qid,kind,settings,job_key,cancel=lambda:False):
         proposal['independence']='정답을 숨긴 별도 호출이지만 동일 모델일 수 있으므로 독립성은 제한됩니다.'
         if not change.strip() or not purpose.strip():raise ValueError('변경점과 교육적 목적이 필요합니다.')
         if kind=='thinking' and any(w in change for w in ('숫자만','문자만','계수만')):raise ValueError('수치·문자만 바꾼 응답은 사고변형으로 저장하지 않았습니다.')
-        q={'body':body,'classification':{'course':raw['course'],'unit':raw['unit'],'type':raw['type'],'certainty':'suggested','basis':'AI 제안'},'difficulty':raw['difficulty'],'input_state':'complete','issues':[]}
+        from .classification import METHOD
+        q={'body':body,'classification':{'course':raw['course'],'unit':raw['unit'],'subunit':raw['type'],'type':raw['type'],'certainty':'suggested','basis':'AI의 개별 생성 문항 분류 제안','scope':'question','method':METHOD,'difficulty_assessment':{'score':raw['difficulty'],'state':'estimated','scope':'question','origin':'ai','basis':['해당 생성 문항의 조건과 풀이에 대한 AI 추정'],'body_fingerprint':body_fingerprint(body)}},'difficulty':raw['difficulty'],'input_state':'complete','issues':[]}
     q['source']={'parent_id':qid,'parent_revision':parent['revision'],'number':parent['source'].get('number'),'generated':True}
     q['fingerprint']=body_fingerprint(q['body']);q['original_answer']=None
     q['answer']=check_question(q,proposal)

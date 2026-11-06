@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from .algebra import scalar_answer,same,Unsupported
-from .model import difficulty_band
+from .model import difficulty_band,question_difficulty
 
 def auto_grade(submitted,question):
     if not submitted.strip():return 'blank',0
@@ -48,7 +48,8 @@ def report(store,attempt_id):
         result=results.get(item['id'],{'submitted':'','score':None,'status':'ungraded'})
         q=item['snapshot'];items.append({**item,**result})
         if attempt['state']=='absent':continue
-        for key,label in (('unit',q['classification']['unit']),('type',q['classification']['type']),('difficulty',difficulty_band(q['difficulty']))):
+        d=question_difficulty(q)
+        for key,label in (('unit',q['classification']['unit']),('type',q['classification']['type']),('difficulty',difficulty_band(d) if d is not None else '미분류')):
             g=groups[key][label];g['count']+=1;g['correct']+=result['status']=='correct';g['score']+=result['score'] or 0;g['maximum']+=item['points']
     maximum=sum(i['points'] for i in exam['items']);score=sum(i['score'] or 0 for i in items)
     correct=sum(i['status']=='correct' for i in items)

@@ -68,3 +68,25 @@ def available(question):
 
 def difficulty_band(value):
     return '하' if value <= 4 else '중' if value <= 7 else '상'
+
+
+def question_difficulty(question):
+    c=question.get('classification',{});a=c.get('difficulty_assessment',{})
+    if question.get('source',{}).get('boundary_review'):return None
+    if c.get('certainty')!='user_confirmed' and a.get('state') in ('unknown','pending_boundary'):return None
+    return question['difficulty']
+
+
+def difficulty_label(question):
+    value=question_difficulty(question)
+    if value is None:return '난이도 미분류'
+    origin='교사 지정' if question['classification'].get('certainty')=='user_confirmed' else '추정'
+    return f'{difficulty_band(value)} · {value}/10 · {origin}'
+
+
+def difficulty_counts(questions):
+    counts={key:0 for key in ('하','중','상','미분류')}
+    for q in questions:
+        score=question_difficulty(q)
+        counts['미분류' if score is None else difficulty_band(score)]+=1
+    return counts

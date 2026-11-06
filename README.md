@@ -1,12 +1,12 @@
 # MathBank Studio
 
-![가져오기 후 다음 작업 안내 화면 · 자체 작성 검증용 자료](docs/images/studio.png)
+![문항별 난이도와 단원별 문항 화면 · 자체 작성 검증용 자료](docs/images/studio.png)
 
 Windows 개인 수학 문제은행을 **빈 프로젝트에서 새로 구현한 독립 프로그램**입니다. 이전 프로그램의 모듈·화면·DB·빌드 산출물을 사용하지 않습니다.
 
 문제 HWPX/HWP → 구조화 문항 → 별도 정답·해설 생성과 검증 → 숫자·사고변형 → 학생별 시험 → PDF/HWPX → 채점·오답 과제·성적표를 로컬 SQLite 자료실에서 연결합니다.
 
-다운로드는 [Releases](https://github.com/harrytim89-hong/harrytim/releases)에서 `MathBankStudio-1.1.0-Windows-x64.zip`을 받으세요. 압축 전체를 풀고 `MathBankStudio.exe`를 실행합니다. 첫 화면의 **자료 가져오기**를 누르면 결과가 열리며, 상단 **지금 할 일** 버튼을 순서대로 따라갑니다. Python·한글 설치 없이 일반 PDF 출력과 채점이 동작합니다.
+다운로드는 [Releases](https://github.com/harrytim89-hong/harrytim/releases)에서 `MathBankStudio-1.2.0-Windows-x64.zip`을 받으세요. 압축 전체를 풀고 `MathBankStudio.exe`를 실행합니다. 첫 화면의 **자료 가져오기**를 누르면 문항별 결과가 열립니다. **단원별 문항**에서 과목·단원·세부단원을 골라 개별 난이도와 함께 볼 수 있습니다. Python·한글 설치 없이 일반 PDF 출력과 채점이 동작합니다.
 
 - [한국어 사용 설명](docs/사용설명.md)
 - [지원 범위와 검증 한계](docs/SUPPORT.md)

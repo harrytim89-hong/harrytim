@@ -56,6 +56,10 @@ class Jobs:
                         saved_held+=result.get('held',0)
                         with self.store.transaction() as db:db.execute('INSERT OR IGNORE INTO job_documents VALUES(?,?)',(jid,target))
                         messages.append('재분리 결과를 저장했습니다. 이전 문항과 시험 기록은 보존했습니다.')
+                    elif row['kind']=='classify':
+                        from .classification import reclassify
+                        self._update(jid,detail=f'{index+1}/{len(targets)} · 해당 문항의 단원·난이도 분류')
+                        reclassify(self.store,target)
                     elif row['kind']=='proofread':
                         from .proofreading import run
                         self._update(jid,detail=f'{index+1}/{len(targets)} · 원문·문장 검수')

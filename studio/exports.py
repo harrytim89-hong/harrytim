@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 import typst
 from .formula import typst as formula_typst,to_eqedit,text_quote,equation
-from .model import identity,checksum,stamp,plain_text
+from .model import difficulty_label,difficulty_counts,identity,checksum,stamp,plain_text
 
 ASSETS=Path(__file__).parent/'ui/assets'
 LABEL={'correct':'정답','wrong':'오답','blank':'무응답','partial':'부분정답','pending':'채점 대기','ungraded':'미채점'}
@@ -103,7 +103,7 @@ class PDF:
                 q=item['snapshot'];a=q.get('answer') or {};num=item['position'];cl=q['classification']
                 if kind=='workbook' and (cl['unit'],cl['type'])!=previous:
                     source+='#block(fill:rgb("#f0f2fa"),inset:8pt,width:100%)['+content_text(cl['unit']+' · '+cl['type'])+']\n\n';previous=(cl['unit'],cl['type'])
-                heading='#block(breakable:false)[#text(weight:"bold",size:12pt,fill:accent)['+content_text(str(num).zfill(2))+'] #h(4pt) #text(size:8pt,fill:rgb("#747d90"))['+content_text(cl['unit']+'  ·  난이도 '+str(q['difficulty'])+'/10  ·  '+str(item['points'])+'점')+']\n\n'
+                heading='#block(breakable:false)[#text(weight:"bold",size:12pt,fill:accent)['+content_text(str(num).zfill(2))+'] #h(4pt) #text(size:8pt,fill:rgb("#747d90"))['+content_text(cl['unit']+'  ·  '+difficulty_label(q)+'  ·  '+str(item['points'])+'점')+']\n\n'
                 if kind=='solutions':
                     source+=heading+content_text('정답  ')+answer_content(q,a)+']\n\n'
                     if a.get('verification')!='passed':source+=content_text('검증 보류 · '+a.get('reason','해설을 먼저 생성해 주세요.'))+'\n\n'
@@ -129,13 +129,15 @@ class PDF:
         a=data['attempt'];exam=data['exam'];source=self.prelude(exam,a['name'],'학습 성적표')
         if a['state']=='absent':source+=content_text('미응시 · 점수와 정답률 집계에서 제외됩니다.');return self.compile(source,'report')
         source+='#grid(columns:(1fr,1fr,1fr),gutter:12pt,'
-        for title,value in [('취득점수',f"{data['score']:g} / {data['maximum']:g}"),('정답 문항',f"{data['correct']} / {data['count']}"),('시험 난이도',f"{data['exam_difficulty']} / 10")]:
+        counts=difficulty_counts(i['snapshot'] for i in data['items'])
+        for title,value in [('취득점수',f"{data['score']:g} / {data['maximum']:g}"),('정답 문항',f"{data['correct']} / {data['count']}"),('문항별 난이도',' · '.join(f'{band} {counts[band]}' for band in ('하','중','상')))]:
             source+='[ #block(fill:rgb("#f1f3fa"),radius:5pt,inset:12pt,width:100%)['+content_text(title)+'\n\n#text(size:19pt,weight:"bold")['+content_text(value)+']] ],'
         source+=')\n#v(15pt)\n'+content_text(a['school']+' · '+a['grade']+' · '+(a['class_name'] or '반 미지정')+' · '+str(a['round'])+'회차')+'\n\n'
         if data['pending']:source+=content_text('채점 대기 '+str(data['pending'])+'문항 · 현재 점수는 잠정치입니다.')+'\n\n'
-        source+='#table(columns:(0.5fr,2fr,1fr,1fr,1fr),inset:6pt,stroke:0.4pt + rgb("#dbe0e9"),[번호],[단원 / 유형],[제출 답],[결과],[점수],'
+        if counts['미분류']:source+=content_text(f"난이도 미분류 {counts['미분류']}문항은 하·중·상 집계에서 제외했습니다.")+'\n\n'
+        source+='#table(columns:(0.4fr,1.6fr,1fr,0.7fr,0.7fr,0.9fr),inset:6pt,stroke:0.4pt + rgb("#dbe0e9"),[번호],[단원 / 유형],[문항 난이도],[제출 답],[결과],[점수],'
         for item in data['items']:
-            q=item['snapshot'];values=[str(item['position']),q['classification']['unit']+' / '+q['classification']['type'],item['submitted'],LABEL[item['status']],('—' if item['score'] is None else f"{item['score']:g}")+f" / {item['points']:g}"]
+            q=item['snapshot'];values=[str(item['position']),q['classification']['unit']+' / '+q['classification']['type'],difficulty_label(q),item['submitted'],LABEL[item['status']],('—' if item['score'] is None else f"{item['score']:g}")+f" / {item['points']:g}"]
             source+=','.join('['+content_text(v)+']' for v in values)+','
         source+=')\n#v(15pt)\n#text(weight:"bold")[단원별 학습 기록]\n\n'
         for unit,g in data['groups']['unit'].items():
@@ -143,7 +145,7 @@ class PDF:
             source+=content_text(f"{unit} · {g['count']}문항 · 정답 {g['correct']}개 · 득점률 {rate:.1f}%")+'\n\n'
         weak=[unit for unit,g in data['groups']['unit'].items() if g['score']<g['maximum']]
         source+=content_text('다음 학습: '+(' / '.join(weak)+'의 오답·부분정답·무응답 문항을 다시 풀어 보세요.' if weak else '이번 시험의 모든 문항을 해결했습니다. 검증된 사고변형으로 개념을 확장해 보세요.'))+'\n\n'
-        source+='#text(size:8pt,fill:rgb("#747d90"))['+content_text('표본 1명. 정답률=만점 문항 수/출제 문항 수. 득점률=취득점수/만점(부분점수 포함). 미응시는 제외. 시험 난이도는 문항 난이도의 단순평균이며 추정값입니다. 타 학교 예상점수는 비교 자료가 없어 산정하지 않습니다.')+']'
+        source+='#text(size:8pt,fill:rgb("#747d90"))['+content_text('표본 1명. 정답률=만점 문항 수/출제 문항 수. 득점률=취득점수/만점(부분점수 포함). 미응시는 제외. 난이도는 문항별로 표시하며 자동 제안은 추정값입니다. 타 학교 예상점수는 비교 자료가 없어 산정하지 않습니다.')+']'
         return self.compile(source,'report')
 
 def hwpx_exam(store,exam,target,kind='questions',student=''):
@@ -177,7 +179,7 @@ def hwpx_exam(store,exam,target,kind='questions',student=''):
                 p=None
             elif k=='unsupported':doc.add_paragraph('입력 보류: '+block['label']);p=None
     for item in exam['items']:
-        q=item['snapshot'];a=q.get('answer') or {};doc.add_paragraph(f"{item['position']}.  [{item['points']:g}점]")
+        q=item['snapshot'];a=q.get('answer') or {};doc.add_paragraph(f"{item['position']}.  [{item['points']:g}점] · {q['classification']['unit']} · {difficulty_label(q)}")
         if kind=='answers':
             p=doc.add_paragraph()
             if q['body']['answer_format']=='short' and a.get('exact_value'):p.add_equation(to_eqedit(equation(a['exact_value'],'latex')))

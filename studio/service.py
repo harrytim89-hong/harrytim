@@ -57,6 +57,10 @@ class Service:
             from .boundaries import suggest_blocks
             q=s.question(args['id']);return suggest_blocks(q['body']['blocks'])
         if action=='proofread':return self.jobs.start('proofread',args['ids'],args.get('settings',{'provider':'local'}))
+        if action=='classify':return self.jobs.start('classify',args['ids'])
+        if action=='edit_classification':
+            from .classification import edit
+            return edit(s,args['id'],args['revision'],args['values'])
         if action=='correct_text':
             from .proofreading import apply
             return apply(s,args['id'],args['revision'],args['finding_id'],args.get('replacement'))
@@ -110,8 +114,8 @@ class Service:
             if 'difficulty' in args:
                 v=int(args['difficulty'])
                 if not 1<=v<=10:raise ValueError('난이도는 1~10입니다.')
-                changes['difficulty']=v
-            if 'classification' in args:changes['classification']={**q['classification'],**args['classification'],'certainty':'user_confirmed'}
+                if v!=q['difficulty']:changes['difficulty']=v
+            if 'classification' in args and any(q['classification'].get(k)!=v for k,v in args['classification'].items()):changes['classification']={**q['classification'],**args['classification'],'certainty':'user_confirmed'}
             if 'provided_answer' in args and str(args['provided_answer']).strip()!=(q.get('original_answer') or ''):
                 answer=str(args['provided_answer']).strip()
                 if len(answer)>300:raise ValueError('제공 정답은 300자 이하로 입력해 주세요.')

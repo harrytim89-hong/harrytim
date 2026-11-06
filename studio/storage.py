@@ -55,6 +55,8 @@ class Store:
         self.db.execute("UPDATE jobs SET state='interrupted',detail='앱 종료로 중단됨 · 재개할 수 있습니다' WHERE state IN ('running','queued')")
         if self.setting('taxonomy') is None:
             self.set_setting('taxonomy', {'courses':['공통수학1','공통수학2','대수','미적분','확률과 통계','중학수학'], 'units':['다항식','방정식과 부등식','복소수','함수','경우의 수','기하','미분류']})
+        from .classification import upgrade_legacy
+        upgrade_legacy(self)
 
     @contextmanager
     def transaction(self):
@@ -114,6 +116,16 @@ class Store:
         old=self.question(qid)
         if not old: raise ValueError('문항을 찾을 수 없습니다.')
         q={**old,**changes}
+        if 'body' in changes and body_fingerprint(q['body'])!=old['fingerprint']:
+            from .classification import assess
+            q['classification'],q['difficulty']=assess(q['body'],q['classification'].get('course'),q['source'].get('boundary_review',False))
+        if 'difficulty' in changes or 'classification' in changes:
+            from .classification import METHOD
+            from .model import difficulty_band
+            score=int(changes.get('difficulty',q['difficulty']))
+            q['difficulty']=score
+            q['classification']={**q['classification'],**changes.get('classification',{}),'certainty':'user_confirmed','scope':'question','method':METHOD}
+            q['classification']['difficulty_assessment']={'score':score,'band':difficulty_band(score),'state':'user_confirmed','scope':'question','origin':'user','method':METHOD,'basis':['교사가 이 문항의 분류 또는 난이도를 수정했습니다.'],'body_fingerprint':body_fingerprint(q['body'])}
         q.pop('answer',None)
         rev=old['revision']+1
         with self.transaction() as db:

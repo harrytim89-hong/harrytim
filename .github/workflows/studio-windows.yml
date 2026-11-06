@@ -40,7 +40,7 @@ jobs:
           if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'Packaged acceptance timed out' }
           if ($p.ExitCode -ne 0) { Get-Content studio-selftest.json; throw 'Packaged acceptance failed' }
           $result = Get-Content studio-selftest.json -Raw | ConvertFrom-Json
-          if (-not $result.ok -or -not $result.desktop_webchannel -or -not $result.guided_full_workflow -or -not $result.gui_proofread_correction) { throw 'Desktop acceptance result invalid' }
+          if (-not $result.ok -or -not $result.desktop_webchannel -or -not $result.guided_full_workflow -or -not $result.gui_proofread_correction -or -not $result.gui_unit_navigation -or -not $result.gui_question_classification) { throw 'Desktop acceptance result invalid' }
           Get-Content studio-selftest.json
           Copy-Item studio-selftest.json dist/MathBankStudio/studio-selftest.json
       - name: Create download archive
@@ -64,5 +64,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $Archive = "dist/MathBankStudio-${env:STUDIO_VERSION}-Windows-x64.zip"
-          gh release create $env:GITHUB_REF_NAME $Archive dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MathBank Studio ${env:STUDIO_VERSION} · 다음 작업 안내와 원문 검수" --notes-file docs/RELEASE.md --latest
+          gh release create $env:GITHUB_REF_NAME $Archive dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MathBank Studio ${env:STUDIO_VERSION} · 문항별 난이도와 단원별 문항" --notes-file docs/RELEASE.md --latest
           if ($LASTEXITCODE -ne 0) { throw 'Release failed' }

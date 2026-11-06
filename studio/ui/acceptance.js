@@ -83,7 +83,41 @@
   if(click(`[data-action=report-export][data-id="${window.__guidedAttempt}"]`))return advance(20);break;
  case 20:
   if(!cfg.report)return {ready:false};
-  return {ready:true,count:data.questions.length,nav:document.querySelectorAll('nav button').length,math:window.__mathCount,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==='user-selected-boundaries').length,guided_import:window.__guidedImport,proofread_correction:window.__proofreadFixed,score:reportData.score,maximum:reportData.maximum,exam:window.__guidedExam,attempt:window.__guidedAttempt};
+  navigate('library');
+  if(document.querySelectorAll('.document-classifications tbody tr').length!==2)return {error:'자료의 문항별 분류표가 없습니다',step:20};
+  if(click('[data-action=work-units]'))return advance(21);break;
+ case 21:
+  if(page!=='questions'||!document.querySelector('.unit-browser'))return {ready:false};
+  if(unitFilteredQuestions().length!==2)return {error:'자료 안의 문항 범위가 다릅니다',step:21};
+  const unitButton=[...document.querySelectorAll('.unit-tree-child')].find(b=>b.dataset.subunit==='다항식의 연산');
+  if(!unitButton)return {error:'세부단원별 문항 목록이 없습니다',step:21};unitButton.click();return advance(22);
+ case 22:
+  const unitQuestions=unitFilteredQuestions();
+  if(unitQuestions.length!==1||questionEstimate(unitQuestions[0])!==3)return {error:'단원 선택에 다른 단원의 문항이 섞였습니다',step:22};
+  window.__unitQuestion=unitQuestions[0].id;window.__unitBefore=JSON.stringify(unitQuestions[0].body);
+  const band=document.querySelector('[data-filter=band]');band.value='high';band.dispatchEvent(new Event('change',{bubbles:true}));return advance(23);
+ case 23:
+  if(unitFilteredQuestions().length!==0||document.querySelectorAll('.q-card').length!==0)return {error:'개별 문항 난이도 필터가 적용되지 않았습니다',step:23};
+  filters.band='';renderPage();
+  if(click(`[data-action=detail][data-id="${window.__unitQuestion}"]`))return advance(24);break;
+ case 24:
+  if(!document.querySelector('.drawer .question-classification')&&!document.querySelector('#drawer .question-classification'))return {ready:false};
+  if(click(`#drawer [data-action=edit-classification][data-id="${window.__unitQuestion}"]`))return advance(25);break;
+ case 25:
+  const classForm=document.querySelector('#classificationForm');if(!classForm)return {ready:false};
+  classForm.elements.unit.value='수업용 단원';classForm.elements.subunit.value='기본 연산';classForm.elements.type.value='직접 대입';classForm.elements.difficulty.value='2';classForm.elements.reason.value='이 문항의 대입·동류항 정리를 확인했습니다.';
+  if(click('[data-action=save-classification]'))return advance(26);break;
+ case 26:
+  const moved=data.questions.find(q=>q.id===window.__unitQuestion);
+  if(!moved||moved.difficulty!==2||!document.querySelector('#modalLayer').classList.contains('hidden'))return {ready:false};
+  if(!moved.available||JSON.stringify(moved.body)!==window.__unitBefore)return {error:'분류 수정이 본문·정답 검증을 변경했습니다',step:26};
+  if(reportData.items.find(i=>i.question_id===moved.id)?.snapshot.difficulty!==3)return {error:'분류 수정이 과거 시험의 난이도를 변경했습니다',step:26};
+  closeDrawer();const scope=document.querySelector('[data-filter=document]');scope.value='';scope.dispatchEvent(new Event('change',{bubbles:true}));
+  const movedUnit=[...document.querySelectorAll('.unit-tree-parent')].find(b=>b.dataset.unit==='수업용 단원');
+  if(!movedUnit)return {error:'수정한 문항의 새 단원이 목록에 없습니다',step:26};movedUnit.click();return advance(27);
+ case 27:
+  if(unitFilteredQuestions().length!==1||unitFilteredQuestions()[0].id!==window.__unitQuestion||document.querySelectorAll('.q-card').length!==1)return {error:'전체 자료에서 새 단원의 개별 문항을 찾지 못했습니다',step:27};
+  return {ready:true,count:data.questions.length,nav:document.querySelectorAll('nav button').length,math:window.__mathCount,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==='user-selected-boundaries').length,guided_import:window.__guidedImport,proofread_correction:window.__proofreadFixed,unit_navigation:true,question_classification:true,score:reportData.score,maximum:reportData.maximum,exam:window.__guidedExam,attempt:window.__guidedAttempt};
  }
  return {ready:false,step:window.__guideStep};
 })()
