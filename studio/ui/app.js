@@ -8,8 +8,9 @@ const statusLabels={untested:'미검증',running:'검증 중',passed:'자동 검
 const resultLabels={correct:'정답',wrong:'오답',partial:'부분정답',blank:'무응답',pending:'채점 대기',ungraded:'미채점'};
 let bridge=null,seq=0,pending=new Map(),data={questions:[],documents:[],students:[],exams:[],attempts:[],jobs:[],trash:[],settings:{ai:{provider:'codex',model:''},taxonomy:{courses:[],units:[]}}};
 let page='questions',selected=new Set(),filters={search:'',unit:'',state:'',difficulty:''},drawerId=null,drawerTab='question',composer=[],reportId=null,reportData=null,searchTimer=null,refreshing=false;
+const bridgeSession=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
 let variantOptions={numeric:1,thinking:1,provider:'local'},examOptions={title:'새 개념 확인 시험',date:new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Seoul'}),academy:'MATHBANK STUDIO',columns:2,font_size:10,monochrome:false};
-function api(action,args={}){return new Promise((resolve,reject)=>{if(!bridge){reject(new Error('데스크톱 연결을 기다려 주세요.'));return}const id=String(++seq);pending.set(id,{resolve,reject});bridge.call(id,action,JSON.stringify(args));});}
+function api(action,args={}){return new Promise((resolve,reject)=>{if(!bridge){reject(new Error('데스크톱 연결을 기다려 주세요.'));return}const id=bridgeSession+':'+String(++seq);pending.set(id,{resolve,reject});bridge.call(id,action,JSON.stringify(args));});}
 function toast(message,error=false){const t=document.createElement('div');t.className='toast'+(error?' error':'');t.textContent=message;$('#toasts').append(t);setTimeout(()=>t.remove(),error?9500:4500);}
 let refreshPromise=null,refreshPending=false,refreshRender=false;
 function refresh(render=true){
