@@ -207,3 +207,39 @@ def export_packet(store,eid,kind='questions',student_id=None,fmt='pdf'):
     with store.transaction() as db:
         db.execute('INSERT INTO exports VALUES(?,?,?,?,?,?,?)',(identity(),eid,student_id,kind,path.relative_to(store.root).as_posix(),checksum(path.read_bytes()),stamp()))
     return str(path)
+
+
+def export_question(store,qid,fmt='pdf'):
+    """Render one independent question without creating an artificial exam."""
+    if fmt not in ('pdf','hwpx'):raise ValueError('문항 파일 형식은 PDF 또는 HWPX입니다.')
+    q=store.question(qid)
+    if not q or q['trashed']:raise ValueError('저장할 문항을 찾을 수 없습니다.')
+    if q['source'].get('boundary_review'):raise ValueError('미분리 원문입니다. 문항 경계를 먼저 확인해 주세요.')
+    return _render_question(store,q,fmt)
+
+
+def _render_question(store,q,fmt):
+    directory=store.root/'outputs'/identity();directory.mkdir()
+    exam={'title':'문항 '+str(q['source'].get('number') or q['id'][:8]),'exam_date':'','status':'confirmed' if q['available'] else 'draft','settings':{'academy':'MATHBANK STUDIO','columns':1},'items':[{'position':1,'points':q['source'].get('original_points') or 5,'snapshot':q}]}
+    path=PDF(store,directory).exam(exam,'questions') if fmt=='pdf' else hwpx_exam(store,exam,directory/'question.hwpx')
+    with store.transaction() as db:
+        db.execute('INSERT INTO exports VALUES(?,?,?,?,?,?,?)',(identity(),None,None,'question_'+fmt,path.relative_to(store.root).as_posix(),checksum(path.read_bytes()),stamp()))
+    return str(path)
+
+
+def export_questions_archive(store,ids,fmt='hwpx'):
+    if fmt not in ('pdf','hwpx'):raise ValueError('문항 파일 형식은 PDF 또는 HWPX입니다.')
+    if not isinstance(ids,list) or not 1<=len(ids)<=200 or len(ids)!=len(set(ids)):raise ValueError('서로 다른 문항을 1~200개 선택해 주세요.')
+    # Validate every target before generating files; no bundle can masquerade as one question.
+    snapshots=[]
+    for qid in ids:
+        q=store.question(qid)
+        if not q or q['trashed'] or q['source'].get('boundary_review'):raise ValueError('미분리 원문이나 삭제된 항목은 개별 문항으로 저장할 수 없습니다.')
+        snapshots.append(q)
+    directory=store.root/'outputs'/identity();directory.mkdir();target=directory/'individual-questions.zip';manifest=[]
+    with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED) as z:
+        for index,q in enumerate(snapshots,1):
+            path=Path(_render_question(store,q,fmt));name=f"{index:03d}-{q['id'][:8]}.{fmt}"
+            z.write(path,name);manifest.append({'file':name,'question_id':q['id'],'revision':q['revision'],'source_document':q.get('document_name'),'source_number':q['source'].get('number'),'sha256':checksum(path.read_bytes())})
+        z.writestr('questions.json',json.dumps(manifest,ensure_ascii=False,indent=2))
+    return str(target)

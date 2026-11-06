@@ -92,12 +92,12 @@ def gui_check(store,output=None):
     files['Contents/section0.xml']=XML.tostring(root)
     with zipfile.ZipFile(review_path,'w',zipfile.ZIP_DEFLATED) as z:
         for name,data in files.items():z.writestr(name,data)
-    exam_path=store.root.parent/'gui-exam.pdf';report_path=store.root.parent/'gui-report.pdf'
-    save_paths=iter([exam_path,report_path])
+    exam_path=store.root.parent/'gui-exam.pdf';report_path=store.root.parent/'gui-report.pdf';single_path=store.root.parent/'gui-single.hwpx';archive_path=store.root.parent/'gui-individual.zip'
+    save_paths=iter([exam_path,report_path,single_path,archive_path])
     old_open,old_save=QFileDialog.getOpenFileNames,QFileDialog.getSaveFileName
     QFileDialog.getOpenFileNames=lambda *a,**k:([str(review_path)],'')
     QFileDialog.getSaveFileName=lambda *a,**k:(str(next(save_paths)),'')
-    window=Window(store);window.show();state={'ready':False,'error':None,'step':0};loop=QEventLoop();start=time.monotonic()
+    window=Window(store);window.show();window.show_recovery('화면 복구 경로 검사');assert window.stack.currentWidget()==window.recovery;window.retry_button.click();state={'ready':False,'error':None,'step':0};loop=QEventLoop();start=time.monotonic()
     script=(Path(__file__).parent/'ui/acceptance.js').read_text(encoding='utf-8')
     def result(value):
         if isinstance(value,str):
@@ -111,6 +111,12 @@ def gui_check(store,output=None):
                 assert value['boundary_rows']>0 and value['boundary_saved']==2,value
                 assert value['guided_import'] and value['proofread_correction'],value
                 assert value['unit_navigation'] and value['question_classification'],value
+                assert value['individual_cards'] and value['question_files'] and window.ui_ready,value
+                with zipfile.ZipFile(archive_path) as z:assert len([n for n in z.namelist() if n.endswith('.hwpx')])==2
+                from hwpx import HwpxDocument
+                assert HwpxDocument.open(single_path).paragraphs
+                picture=window.view.grab().toImage();colors={picture.pixelColor(x,y).rgba() for x in range(0,picture.width(),31) for y in range(0,picture.height(),29)}
+                assert len(colors)>20,('화면이 단색으로 표시되었습니다',len(colors))
                 assert value['score']==10 and value['maximum']==10,value
                 assert PdfReader(exam_path).pages and PdfReader(report_path).pages
                 state['ready']=True
@@ -119,10 +125,15 @@ def gui_check(store,output=None):
             loop.quit()
         elif time.monotonic()-start>100:state['error']='화면 전체 흐름 시간 초과 · 단계 '+str(state['step']);loop.quit()
     def check():
-        flags=json.dumps({'exam':exam_path.exists(),'report':report_path.exists()})
+        flags=json.dumps({'exam':exam_path.exists(),'report':report_path.exists(),'single':single_path.exists(),'archive':archive_path.exists()})
         window.page.runJavaScript('window.__guideFiles='+flags+';JSON.stringify('+script+')',result)
     timer=QTimer();timer.timeout.connect(check);timer.start(350);QTimer.singleShot(110000,loop.quit)
-    try:loop.exec()
+    try:
+        loop.exec();timer.stop()
+        if state['ready']:
+            from .layoutcheck import verify,verify_renderer_recovery
+            verify_renderer_recovery(window)
+            verify(window)
     finally:
         timer.stop();window.close();app.processEvents();QFileDialog.getOpenFileNames=old_open;QFileDialog.getSaveFileName=old_save
     if not state['ready']:raise AssertionError(state['error'] or '화면 검증 실패 · 단계 '+str(state['step']))
@@ -131,7 +142,7 @@ def gui_check(store,output=None):
 def run():
     try:
         with tempfile.TemporaryDirectory(prefix='mathbank-studio-check-',ignore_cleanup_errors=True) as temp:
-            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['guided_full_workflow']=True;result['gui_proofread_correction']=True;result['gui_unit_navigation']=True;result['gui_question_classification']=True;result['questions_after_gui']=len(store.questions());store.db.close()
+            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['guided_full_workflow']=True;result['gui_proofread_correction']=True;result['native_screen_recovery']=True;result['renderer_restart']=True;result['rendered_pixels']=True;result['responsive_layout']=True;result['rendering_mode']='software' if __import__('studio.desktop',fromlist=['SOFTWARE_RENDERING']).SOFTWARE_RENDERING else 'system';result['display_scale']=os.environ.get('QT_SCALE_FACTOR','1');result['qt_platform']=__import__('PySide6.QtGui',fromlist=['QGuiApplication']).QGuiApplication.platformName();result['individual_question_cards']=True;result['individual_question_files']=True;result['gui_unit_navigation']=True;result['gui_question_classification']=True;result['questions_after_gui']=len(store.questions());store.db.close()
         Path('studio-selftest.json').write_text(json.dumps({'ok':True,**result},ensure_ascii=False,indent=2),encoding='utf-8')
         return 0
     except BaseException as exc:

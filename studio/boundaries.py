@@ -11,7 +11,7 @@ from .formula import local
 SKIP={'header','footer','endNote','footNote','secPr','linesegarray'}
 CUES=re.compile(r'\?|？|구하|값은|계산하|계산하면|나타내|증명하|고르|옳은|옳지|몇|만족|최댓값|최솟값|전개하|인수분해하|보여라|풀어라|구하여라')
 # Decimal literals such as 0.8 or 1.5 must not become question numbers.
-PREFIX=re.compile(r'^\s*(?:(?P<label>\[?\s*(?:문제|문항|물음|서답형|서술형)\s*(?P<ln>\d{1,4})\s*\]?[.):．]?)[\s\u3000]*|(?P<bracket>[\[【(（]\s*(?P<bn>\d{1,4})\s*[\]】)）])\s*|(?P<plain>(?P<pn>\d{1,4})\s*[.．](?!\d)|(?P<rn>\d{1,4})\s*[)）])\s*)')
+PREFIX=re.compile(r'^\s*(?:(?P<label>\[?\s*(?:문제|문항|물음|서답형|서술형|단답형|주관식)\s*(?P<ln>\d{1,4})\s*\]?[.):．]?)[\s\u3000]*|(?P<bracket>[\[【(（]\s*(?P<bn>\d{1,4})\s*[\]】)）])\s*|(?P<plain>(?P<pn>\d{1,4})\s*[.．](?!\d)|(?P<rn>\d{1,4})\s*[)）])\s*)')
 
 def descendants(node,name):return [n for n in node.iter() if local(n.tag)==name]
 
@@ -99,6 +99,13 @@ class Start:
 
 def _sequence(items):
     return len(items)>=2 and all(b.number==a.number+1 for a,b in zip(items,items[1:]))
+
+
+SECTION_HEADING=re.compile(r'^\s*[※■◆*\[【(（\s]*(?:단답형|주관식|서답형|서술형|객관식|선택형)(?:\s*문항|\s*문제)?[\]】)）:\s]*$')
+
+
+def section_between(units,start,end):
+    return any(SECTION_HEADING.fullmatch(visible_text(u.node)) for u in units[start+1:end])
 
 def _container_question_evidence(container):
     # A condition table with numbered rows is not a set of questions.
@@ -251,16 +258,16 @@ def detect(units,files):
         if (_sequence(outer) or len(outer)==1) and has_goals:return outer,'paragraph-numbering'
     groups=defaultdict(list)
     for candidate in plain:
-        scope=(re.search(r'문제|문항|물음|서답형|서술형',candidate.label)[0] if candidate.family=='label' else '')
+        scope=(re.search(r'문제|문항|물음|서답형|서술형|단답형|주관식',candidate.label)[0] if candidate.family=='label' else '')
         groups[(candidate.family,scope)].append(candidate)
     ranked=[]
     for (family,scope),starts in groups.items():
-        increasing=all(b.number>a.number for a,b in zip(starts,starts[1:]))
+        increasing=all(b.number>a.number or b.number==1 and section_between(units,a.index,b.index) for a,b in zip(starts,starts[1:]))
         if not increasing:continue
         # Numbered conditions/decimal data alone are not a document profile.
         cue_count=sum(bool(CUES.search(' '.join(visible_text(u.node) for u in units[s.index:(starts[j+1].index if j+1<len(starts) else len(units))]))) for j,s in enumerate(starts))
         style_count=len({(units[s.index].node.get('styleIDRef'),units[s.index].node.get('paraPrIDRef')) for s in starts})
-        consecutive=_sequence(starts)
+        consecutive=len(starts)>=2 and all(b.number==a.number+1 or b.number==1 and section_between(units,a.index,b.index) for a,b in zip(starts,starts[1:]))
         if len(starts)>=2 and (consecutive or cue_count==len(starts)) or len(starts)==1 and (cue_count or family=='label'):
             priority={'label':4,'math-label':4,'dot':3,'paren':2,'bracket':1}[family]
             ranked.append((priority,len(starts),-style_count,starts))
@@ -269,7 +276,7 @@ def detect(units,files):
         # preceding multiple-choice items just because its label is explicit.
         ranked.sort(key=lambda item:(-item[3][0].index,*item[:3]),reverse=True);starts=list(ranked[0][3])
         for _,_,_,extra in ranked[1:]:
-            if extra[0].family=='label':
+            if extra[0].family=='label' or any(section_between(units,s.index,extra[0].index) for s in starts if s.index<extra[0].index):
                 starts.extend(s for s in extra if s.index not in {a.index for a in starts})
         starts.sort(key=lambda s:s.index)
         indices={s.index for s in starts}

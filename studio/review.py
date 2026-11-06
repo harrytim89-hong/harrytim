@@ -25,7 +25,7 @@ def summary(store,did):
     if suspects and document['report'].get('parser_version',0)<3:
         next_action='reparse';next_title='이전 버전의 분리 결과를 다시 분석하세요';next_reason=f'{len(suspects)}문항에서 보기 번호 또는 여러 보기 묶음이 문항 경계로 잘못 처리되었을 가능성이 있습니다. 관리 원본에서 다시 분리하고 이전 기록은 보존합니다.'
     elif unresolved:
-        next_action='reparse' if document['report'].get('parser_version',0)<3 else 'boundaries'
+        next_action='reparse' if document['report'].get('parser_version',0)<4 else 'boundaries'
         next_title='자동 분리를 다시 분석하세요' if next_action=='reparse' else '자동 분리안을 확인하세요'
         next_reason=f'{len(unresolved)}개 묶음의 경계가 아직 확정되지 않았습니다. 시작 문단을 전부 찾는 대신 자동 제안부터 보여 드립니다.'
     elif findings:

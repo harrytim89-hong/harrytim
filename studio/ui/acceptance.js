@@ -10,9 +10,12 @@
   if(data.questions.length!==4)return {ready:false};
   if(click('[data-action=import]'))return advance(1);break;
  case 1:
-  if(!workSummary||workSummary.counts.bundles!==1)return {ready:false};
-  if(!document.querySelector('.work-next [data-action=work-next]'))return {ready:false};
+  if(page!=='questions'||!document.querySelector('.pending-questions'))return {ready:false};
+  if(document.querySelectorAll('.q-card').length!==0)return {error:'미분리 원문을 개별 문항으로 표시했습니다',step:1};
   window.__guidedImport=true;
+  if(click('[data-action=pending-document]'))return advance(28);break;
+ case 28:
+  if(!workSummary||workSummary.counts.bundles!==1)return {ready:false};
   if(click('.work-next [data-action=work-next]'))return advance(2);break;
  case 2:
   if(!document.querySelector('[data-action=save-boundaries]'))return {ready:false};
@@ -117,7 +120,21 @@
   if(!movedUnit)return {error:'수정한 문항의 새 단원이 목록에 없습니다',step:26};movedUnit.click();return advance(27);
  case 27:
   if(unitFilteredQuestions().length!==1||unitFilteredQuestions()[0].id!==window.__unitQuestion||document.querySelectorAll('.q-card').length!==1)return {error:'전체 자료에서 새 단원의 개별 문항을 찾지 못했습니다',step:27};
-  return {ready:true,count:data.questions.length,nav:document.querySelectorAll('nav button').length,math:window.__mathCount,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==='user-selected-boundaries').length,guided_import:window.__guidedImport,proofread_correction:window.__proofreadFixed,unit_navigation:true,question_classification:true,score:reportData.score,maximum:reportData.maximum,exam:window.__guidedExam,attempt:window.__guidedAttempt};
+  if(click(`[data-action=question-file][data-id="${window.__unitQuestion}"]`))return advance(29);break;
+ case 29:
+  if(click('[data-action=question-file-go]'))return advance(30);break;
+ case 30:
+  if(!cfg.single||!document.querySelector('#modalLayer').classList.contains('hidden'))return {ready:false};
+  const individualIds=data.questions.filter(q=>q.document_id===workDocument&&!q.source.boundary_review).map(q=>q.id);
+  filters={search:'',unit:'',state:'',difficulty:'',document:workDocument};renderPage();
+  if(individualIds.length!==2||document.querySelectorAll('.q-card').length!==2)return {error:'문항 하나당 카드 하나가 아닙니다',step:30};
+  for(const id of individualIds){const box=document.querySelector(`[data-select="${id}"]`);box.checked=true;box.dispatchEvent(new Event('change',{bubbles:true}));}
+  if(click('[data-action=question-files]'))return advance(31);break;
+ case 31:
+  if(click('[data-action=question-file-go]'))return advance(32);break;
+ case 32:
+  if(!cfg.archive||!document.querySelector('#modalLayer').classList.contains('hidden'))return {ready:false};
+  return {ready:true,individual_cards:true,question_files:true,count:data.questions.length,nav:document.querySelectorAll('nav button').length,math:window.__mathCount,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==='user-selected-boundaries').length,guided_import:window.__guidedImport,proofread_correction:window.__proofreadFixed,unit_navigation:true,question_classification:true,score:reportData.score,maximum:reportData.maximum,exam:window.__guidedExam,attempt:window.__guidedAttempt};
  }
  return {ready:false,step:window.__guideStep};
 })()

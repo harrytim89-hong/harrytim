@@ -1,16 +1,21 @@
 'use strict';
 // A document remains the user's context from import through exam composition.
-let workDocument=null,workSummary=null,workQuestion=null,workTab='question',followJob=null;
+let workDocument=null,workSummary=null,workQuestion=null,workTab='question',followJob=null;let lastImport=null;
 let sourceCache=new Map(),workBusy=false,lastCreatedExam=null;
 window.noteCreatedExam=(id)=>{lastCreatedExam=id;};
 window.examWorkflowGuidance=()=>lastCreatedExam?`<div class="work-next"><div><strong>시험을 저장했습니다. 다음은 출력 또는 학생 배정입니다.</strong><p>① 출력에서 문제지·정답·해설 저장 → ② 학생 배정 → ③ 성적표에서 답안 입력·채점</p></div><div class="row">${btn('출력','export-dialog','primary',`data-id="${lastCreatedExam}"`,'download')}${btn('학생 배정','assign-dialog','',`data-id="${lastCreatedExam}"`,'students')}</div></div>`:'';
 const workLabels={import:'자료 가져오기',reparse:'문항 자동 재분리',classify:'문항별 단원·난이도 분류',proofread:'원문·문장 검수',explain:'정답·해설 생성',variant:'변형 생성'};
 
-window.followImportJob=(id)=>{followJob=id;workDocument=null;workSummary=null;page='library';closeDrawer();renderPage();};
+window.followImportJob=(id)=>{followJob=id;workDocument=null;workSummary=null;page='questions';closeDrawer();renderPage();};
 window.workflowDataUpdated=async()=>{
  if(followJob){
   const job=data.jobs.find(j=>j.id===followJob);
-  if(job?.document_ids?.length){workDocument=job.document_ids[0];workQuestion=null;followJob=null;page='library';}
+  if(job?.document_ids?.length){
+   if(!lastImport||lastImport.job!==job.id||lastImport.documents.join()!==job.document_ids.join()){
+    lastImport={job:job.id,documents:job.document_ids};filters={search:'',unit:'',state:'',difficulty:'',import_job:job.id};page='questions';workDocument=null;workSummary=null;
+   }
+   if(!['queued','running'].includes(job.state))followJob=null;
+  }
  }
  if(!workDocument)return;
  const requestedDocument=workDocument;
