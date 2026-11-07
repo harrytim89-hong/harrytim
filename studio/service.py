@@ -10,9 +10,13 @@ from . import assessment,ai
 from . import VERSION
 
 class Service:
-    def __init__(self,store,notify=lambda:None):self.store=store;self.jobs=Jobs(store,notify)
+    def __init__(self,store,notify=lambda:None):
+        from .similarity import SimilarityIndex
+        self.store=store;self.jobs=Jobs(store,notify);self.similarity=SimilarityIndex(store)
     def question_for_ui(self,q):
         q=copy.deepcopy(q)
+        from .curriculum import scope
+        q['school_level']='미분류' if q['source'].get('boundary_review') else scope(q['body'],q['classification'])
         blocks=[q['body']['blocks'],*q['body'].get('choices',[])]
         if q.get('answer'):
             blocks.extend(s['blocks'] for s in q['answer'].get('steps',[]))
@@ -38,6 +42,7 @@ class Service:
     def command(self,action,args):
         s=self.store
         if action=='snapshot':return self.snapshot()
+        if action=='similar_questions':return self.similarity.search(args['id'],args.get('limit',30))
         if action=='document_review':
             from .review import summary
             return summary(s,args['id'])
@@ -100,6 +105,7 @@ class Service:
         if action=='assign':return s.assign(args['exam_id'],args['student_ids'],args.get('absent',False))
         if action=='grade':return assessment.grade(s,args['id'],args.get('answers',{}),args.get('manual'),args.get('absent',False))
         if action=='report':return assessment.report(s,args['id'])
+        if action=='report_comment':return assessment.save_comment(s,args['id'],args.get('comment',''))
         if action=='remediation':return assessment.remediation(s,args['id'],args.get('kind','original'))
         if action=='trash':s.trash(args['kind'],args['id'],args.get('value',True));return True
         if action=='favorite':

@@ -83,6 +83,12 @@
   if(click('[data-action=do-grade]'))return advance(19);break;
  case 19:
   if(!reportData||reportData.attempt.state!=='graded'||reportData.score!==10||reportData.maximum!==10)return {ready:false};
+  const comment=document.querySelector('#reportComment');if(!comment)return {error:'교사 코멘트 입력란이 없습니다',step:19};
+  comment.value='조건을 식으로 표현하는 과정이 좋아졌습니다. 다음 시간에는 풀이를 설명해 봅시다.';
+  if(click('[data-action=save-report-comment]'))return advance(33);break;
+ case 33:
+  if(reportData.comment!=='조건을 식으로 표현하는 과정이 좋아졌습니다. 다음 시간에는 풀이를 설명해 봅시다.')return {ready:false};
+  window.__reportCommentSaved=true;
   if(click(`[data-action=report-export][data-id="${window.__guidedAttempt}"]`))return advance(20);break;
  case 20:
   if(!cfg.report)return {ready:false};
@@ -134,7 +140,28 @@
   if(click('[data-action=question-file-go]'))return advance(32);break;
  case 32:
   if(!cfg.archive||!document.querySelector('#modalLayer').classList.contains('hidden'))return {ready:false};
-  return {ready:true,individual_cards:true,question_files:true,count:data.questions.length,nav:document.querySelectorAll('nav button').length,math:window.__mathCount,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==='user-selected-boundaries').length,guided_import:window.__guidedImport,proofread_correction:window.__proofreadFixed,unit_navigation:true,question_classification:true,score:reportData.score,maximum:reportData.maximum,exam:window.__guidedExam,attempt:window.__guidedAttempt};
+  filters={search:'',unit:'',state:'',difficulty:''};renderPage();
+  if(click('[data-action=school-filter][data-level="중등"]'))return advance(34);break;
+ case 34:
+  if(unitFilteredQuestions().some(q=>!['중등','중·고 공통'].includes(q.school_level)))return {error:'중등 범위에 고등 전용 문항이 섞였습니다',step:34};
+  filters.school='';renderPage();
+  const parent=data.questions.find(q=>data.questions.some(child=>child.lineage?.parent_id===q.id));
+  if(!parent)return {error:'유사 문항 검증 원본이 없습니다',step:34};
+  window.__similarSource=parent.id;composer=[{id:parent.id,points:7}];
+  if(click(`[data-action=similar-questions][data-id="${parent.id}"]`))return advance(35);break;
+ case 35:
+  if(!document.querySelector('.similar-item'))return {ready:false};
+  if(click('.similar-item [data-action=compare-questions]'))return advance(36);break;
+ case 36:
+  if(document.querySelectorAll('.question-compare>section').length!==2)return {ready:false};
+  const replace=document.querySelector('[data-action=replace-similar]');if(!replace)return {error:'유사 문항 교체 버튼이 없습니다',step:36};
+  window.__similarTarget=replace.dataset.id;replace.click();return advance(37);
+ case 37:
+  if(page!=='exams'||composer[0]?.id!==window.__similarTarget)return {ready:false};
+  if(composer.length!==1||composer[0].points!==7)return {error:'유사 문항 교체가 배점이나 문항 수를 바꾸었습니다',step:37};
+  window.__similarityChecked=true;selected.clear();filters={search:'',unit:'',state:'',difficulty:''};navigate('questions');return advance(38);
+ case 38:
+  return {ready:true,similarity:window.__similarityChecked,report_comment:window.__reportCommentSaved,individual_cards:true,question_files:true,count:data.questions.length,nav:document.querySelectorAll('nav button').length,math:window.__mathCount,boundary_rows:window.__boundaryRows,boundary_saved:data.questions.filter(q=>q.source.profile==='user-selected-boundaries').length,guided_import:window.__guidedImport,proofread_correction:window.__proofreadFixed,unit_navigation:true,question_classification:true,score:reportData.score,maximum:reportData.maximum,exam:window.__guidedExam,attempt:window.__guidedAttempt};
  }
  return {ready:false,step:window.__guideStep};
 })()

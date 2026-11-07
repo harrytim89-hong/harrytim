@@ -3,6 +3,8 @@ on:
   push:
     branches: [main, rebuild/mathbank-studio]
     tags: ['studio-v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: write
@@ -41,7 +43,7 @@ jobs:
             if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "Packaged acceptance timed out at scale $StudioScale" }
             if ($p.ExitCode -ne 0) { Get-Content studio-selftest.json; throw "Packaged acceptance failed at scale $StudioScale" }
             $result = Get-Content studio-selftest.json -Raw | ConvertFrom-Json
-            if (-not $result.ok -or -not $result.guided_full_workflow -or -not $result.gui_question_classification -or -not $result.native_screen_recovery -or -not $result.rendered_pixels -or -not $result.responsive_layout -or -not $result.individual_question_cards -or -not $result.individual_question_files -or -not $result.renderer_restart -or $result.rendering_mode -ne 'software' -or $result.qt_platform -ne 'windows' -or $result.display_scale -ne $StudioScale) { throw 'Desktop acceptance result invalid' }
+            if (-not $result.ok -or -not $result.guided_full_workflow -or -not $result.gui_question_classification -or -not $result.gui_similarity_search -or -not $result.gui_report_comment -or -not $result.native_screen_recovery -or -not $result.rendered_pixels -or -not $result.responsive_layout -or -not $result.individual_question_cards -or -not $result.individual_question_files -or -not $result.renderer_restart -or $result.rendering_mode -ne 'software' -or $result.qt_platform -ne 'windows' -or $result.display_scale -ne $StudioScale) { throw 'Desktop acceptance result invalid' }
             Get-Content studio-selftest.json
             Copy-Item studio-selftest.json "dist/MathBankStudio/selftest-scale-$StudioScale.json"
           }

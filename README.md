@@ -1,4 +1,4 @@
-# MathBank Studio
+# 수학비서 · MathBank Studio
 
 ![한 문제씩 분리된 문항 DB 화면 · 자체 작성 검증용 자료](docs/images/studio.png)
 
@@ -6,7 +6,7 @@ Windows 개인 수학 문제은행을 **빈 프로젝트에서 새로 구현한 
 
 문제 HWPX/HWP → 구조화 문항 → 별도 정답·해설 생성과 검증 → 숫자·사고변형 → 학생별 시험 → PDF/HWPX → 채점·오답 과제·성적표를 로컬 SQLite 자료실에서 연결합니다.
 
-다운로드는 [Releases](https://github.com/harrytim89-hong/harrytim/releases)에서 `MathBankStudio-1.3.0-Windows-x64.zip`을 받으세요. 압축 전체를 풀고 `MathBankStudio.exe`를 실행합니다. 실행하면 **문항 DB**가 열립니다. **자료 가져오기**를 누르면 문제 하나당 카드 하나로 표시하며, 각 문항을 독립적으로 열기·파일 저장·시험에 담기 할 수 있습니다. 단원과 난이도로 거를 수 있고 여러 문항을 선택해 문항별 HWPX/PDF 파일을 ZIP으로 저장할 수 있습니다. Windows는 소프트웨어 렌더링을 기본 사용하며 상단 **화면 복구** 메뉴는 웹 화면과 독립적으로 작동합니다. Python·한글 설치 없이 일반 PDF 출력과 채점이 동작합니다.
+**현재 소스: 1.4.0** — 동일·유사 검색, 문항 비교·교체, 학교 범위 필터, 교사 코멘트, 문항 은행 UI를 추가했습니다. 이 소스의 Windows 실행파일은 Windows CI 검사를 거쳐 생성합니다. 기존 공개 배포본 다운로드는 [Releases](https://github.com/harrytim89-hong/harrytim/releases)에서 `MathBankStudio-1.3.0-Windows-x64.zip`을 받으세요. 압축 전체를 풀고 `MathBankStudio.exe`를 실행합니다. 실행하면 **문항 DB**가 열립니다. **자료 가져오기**를 누르면 문제 하나당 카드 하나로 표시하며, 각 문항을 독립적으로 열기·파일 저장·시험에 담기 할 수 있습니다. 단원과 난이도로 거를 수 있고 여러 문항을 선택해 문항별 HWPX/PDF 파일을 ZIP으로 저장할 수 있습니다. Windows는 소프트웨어 렌더링을 기본 사용하며 상단 **화면 복구** 메뉴는 웹 화면과 독립적으로 작동합니다. Python·한글 설치 없이 일반 PDF 출력과 채점이 동작합니다.
 
 - [한국어 사용 설명](docs/사용설명.md)
 - [지원 범위와 검증 한계](docs/SUPPORT.md)

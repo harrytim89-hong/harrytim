@@ -112,6 +112,7 @@ def gui_check(store,output=None):
                 assert value['guided_import'] and value['proofread_correction'],value
                 assert value['unit_navigation'] and value['question_classification'],value
                 assert value['individual_cards'] and value['question_files'] and window.ui_ready,value
+                assert value['similarity'] and value['report_comment'],value
                 with zipfile.ZipFile(archive_path) as z:assert len([n for n in z.namelist() if n.endswith('.hwpx')])==2
                 from hwpx import HwpxDocument
                 assert HwpxDocument.open(single_path).paragraphs
@@ -142,7 +143,7 @@ def gui_check(store,output=None):
 def run():
     try:
         with tempfile.TemporaryDirectory(prefix='mathbank-studio-check-',ignore_cleanup_errors=True) as temp:
-            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['guided_full_workflow']=True;result['gui_proofread_correction']=True;result['native_screen_recovery']=True;result['renderer_restart']=True;result['rendered_pixels']=True;result['responsive_layout']=True;result['rendering_mode']='software' if __import__('studio.desktop',fromlist=['SOFTWARE_RENDERING']).SOFTWARE_RENDERING else 'system';result['display_scale']=os.environ.get('QT_SCALE_FACTOR','1');result['qt_platform']=__import__('PySide6.QtGui',fromlist=['QGuiApplication']).QGuiApplication.platformName();result['individual_question_cards']=True;result['individual_question_files']=True;result['gui_unit_navigation']=True;result['gui_question_classification']=True;result['questions_after_gui']=len(store.questions());store.db.close()
+            store,result=exercise(Path(temp));result['desktop_webchannel']=gui_check(store);result['gui_boundary_split']=True;result['guided_full_workflow']=True;result['gui_proofread_correction']=True;result['native_screen_recovery']=True;result['renderer_restart']=True;result['rendered_pixels']=True;result['responsive_layout']=True;result['rendering_mode']='software' if __import__('studio.desktop',fromlist=['SOFTWARE_RENDERING']).SOFTWARE_RENDERING else 'system';result['display_scale']=os.environ.get('QT_SCALE_FACTOR','1');result['qt_platform']=__import__('PySide6.QtGui',fromlist=['QGuiApplication']).QGuiApplication.platformName();result['individual_question_cards']=True;result['individual_question_files']=True;result['gui_unit_navigation']=True;result['gui_question_classification']=True;result['gui_similarity_search']=True;result['gui_report_comment']=True;result['questions_after_gui']=len(store.questions());store.db.close()
         Path('studio-selftest.json').write_text(json.dumps({'ok':True,**result},ensure_ascii=False,indent=2),encoding='utf-8')
         return 0
     except BaseException as exc:
