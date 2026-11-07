@@ -3,7 +3,14 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from .algebra import scalar_answer,same,Unsupported
-from .model import difficulty_band,question_difficulty
+from .model import difficulty_band,question_difficulty,stamp
+
+def save_comment(store,attempt_id,comment):
+    if not any(a['id']==attempt_id for a in store.attempts()):raise ValueError('응시 기록이 없습니다.')
+    if not isinstance(comment,str) or len(comment)>4000:raise ValueError('교사 코멘트는 4000자 이하로 입력해 주세요.')
+    with store.transaction() as db:
+        db.execute('INSERT INTO report_notes VALUES(?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET comment=excluded.comment,updated=excluded.updated',(attempt_id,comment.strip(),stamp()))
+    return report(store,attempt_id)
 
 def auto_grade(submitted,question):
     if not submitted.strip():return 'blank',0
@@ -54,7 +61,12 @@ def report(store,attempt_id):
     maximum=sum(i['points'] for i in exam['items']);score=sum(i['score'] or 0 for i in items)
     correct=sum(i['status']=='correct' for i in items)
     pending=sum(i['status'] in ('pending','ungraded') for i in items)
-    return {'attempt':attempt,'exam':exam,'items':items,'score':None if attempt['state']=='absent' else score,'maximum':maximum,'correct':correct,'count':len(items),'pending':pending,'correct_rate':None if attempt['state']=='absent' else correct/len(items)*100,'score_rate':None if attempt['state']=='absent' else score/maximum*100,'groups':{k:dict(v) for k,v in groups.items()},'sample_size':1,'exam_difficulty':round(sum(i['snapshot']['difficulty'] for i in items)/len(items),1)}
+    notes=store.rows('SELECT comment FROM report_notes WHERE attempt_id=?',(attempt_id,))
+    weak=defaultdict(list)
+    if attempt['state']!='absent':
+        for item in items:
+            if item['status'] in ('wrong','partial','blank'):weak[item['snapshot']['classification']['type']].append(item['position'])
+    return {'attempt':attempt,'exam':exam,'items':items,'score':None if attempt['state']=='absent' else score,'maximum':maximum,'correct':correct,'count':len(items),'pending':pending,'correct_rate':None if attempt['state']=='absent' else correct/len(items)*100,'score_rate':None if attempt['state']=='absent' else score/maximum*100,'groups':{k:dict(v) for k,v in groups.items()},'sample_size':1,'exam_difficulty':round(sum(i['snapshot']['difficulty'] for i in items)/len(items),1),'comment':notes[0]['comment'] if notes else '', 'weak_types':dict(weak)}
 
 def remediation(store,attempt_id,kind='original'):
     r=report(store,attempt_id)

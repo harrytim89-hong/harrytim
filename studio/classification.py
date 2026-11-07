@@ -25,7 +25,16 @@ def assess(body, course='미상', boundary_review=False):
         unit, subunit, kind, score, reasons = u, s, k, value, [reason]
 
     # Most specific tasks precede incidental vocabulary (e.g. complex roots).
-    if '나머지' in text and any(w in text for w in ('다항식','나누','나눈','이차식')):
+    if any(w in text for w in ('소인수분해','최대공약수','최소공배수')):
+        choose('수와 연산','소인수분해','약수와 배수',3,'소인수와 약수·배수의 관계를 사용')
+    elif any(w in text for w in ('정비례','반비례')):
+        choose('함수','좌표평면과 그래프','반비례' if '반비례' in text else '정비례',3,'두 양 사이의 비례 관계를 식과 그래프로 표현')
+    elif any(w in text for w in ('도수분포','줄기와 잎','상대도수')):
+        choose('확률과 통계','자료의 정리와 해석','자료의 해석',3,'자료를 정리하고 도수와 분포를 읽음')
+    elif '피타고라스' in text or '원주각' in text or '삼각비' in text:
+        sub='피타고라스 정리' if '피타고라스' in text else '원주각' if '원주각' in text else '삼각비'
+        choose('기하',sub,sub+'의 활용',4,'도형의 길이와 각의 관계에 '+sub+'를 적용')
+    elif '나머지' in text and any(w in text for w in ('다항식','나누','나눈','이차식')):
         choose('다항식','나머지정리','나머지정리의 적용',4,'나눗셈의 나머지 조건을 식의 값으로 바꾸는 문항')
         if '자연수' in text and any(w in text for w in ('모든','임의')):
             score=7;kind='일반 자연수와 나머지 조건';reasons.append('특정 수 대입을 넘어 일반 자연수에서 성립하는 관계를 해석')
@@ -116,6 +125,8 @@ def assess(body, course='미상', boundary_review=False):
     if not reasons:reasons=['이 문항을 판정할 충분한 분류 규칙이 없습니다. 문항별로 지정할 수 있습니다.']
     estimate={'score':score,'band':difficulty_band(score) if score is not None else None,'state':state,'scope':'question','origin':'local_rule','method':METHOD,'basis':reasons,'limitation':LIMITATION,'body_fingerprint':body_fingerprint(body)}
     classification={'course':course or '미상','unit':unit,'subunit':subunit,'type':kind,'certainty':'suggested','basis':'해당 문항의 본문·수식·조건에 따른 자동 제안','method':METHOD,'scope':'question','difficulty_assessment':estimate}
+    from .curriculum import scope
+    classification['school_level']='미분류' if boundary_review else scope(body,classification)
     return classification, score if score is not None else 5
 
 
@@ -158,6 +169,9 @@ def edit(store,qid,revision,values):
     reason=str(values.get('reason','교사가 해당 문항의 난이도와 분류를 지정했습니다.')).strip()
     if not reason or len(reason)>1000:raise ValueError('분류 근거는 1~1000자로 입력해 주세요.')
     c.update(certainty='user_confirmed',scope='question',method=METHOD,basis=reason)
+    if 'school_level' in values:
+        if values['school_level'] not in ('중등','고등','중·고 공통','미분류'):raise ValueError('학교 범위를 선택해 주세요.')
+        c['school_level']=values['school_level']
     c['difficulty_assessment']={'score':score,'band':difficulty_band(score),'state':'user_confirmed','scope':'question','origin':'user','method':METHOD,'basis':[reason],'body_fingerprint':q['fingerprint']}
     return save(store,q,c,score)
 

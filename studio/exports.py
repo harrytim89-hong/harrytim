@@ -127,7 +127,10 @@ class PDF:
 
     def report(self,data):
         a=data['attempt'];exam=data['exam'];source=self.prelude(exam,a['name'],'학습 성적표')
-        if a['state']=='absent':source+=content_text('미응시 · 점수와 정답률 집계에서 제외됩니다.');return self.compile(source,'report')
+        if a['state']=='absent':
+            source+=content_text('미응시 · 점수와 정답률 집계에서 제외됩니다.')
+            if data.get('comment'):source+='\n\n#text(weight:"bold")[교사 코멘트]\n\n'+content_text(data['comment'])
+            return self.compile(source,'report')
         source+='#grid(columns:(1fr,1fr,1fr),gutter:12pt,'
         counts=difficulty_counts(i['snapshot'] for i in data['items'])
         for title,value in [('취득점수',f"{data['score']:g} / {data['maximum']:g}"),('정답 문항',f"{data['correct']} / {data['count']}"),('문항별 난이도',' · '.join(f'{band} {counts[band]}' for band in ('하','중','상')))]:
@@ -143,8 +146,11 @@ class PDF:
         for unit,g in data['groups']['unit'].items():
             rate=g['score']/g['maximum']*100
             source+=content_text(f"{unit} · {g['count']}문항 · 정답 {g['correct']}개 · 득점률 {rate:.1f}%")+'\n\n'
-        weak=[unit for unit,g in data['groups']['unit'].items() if g['score']<g['maximum']]
-        source+=content_text('다음 학습: '+(' / '.join(weak)+'의 오답·부분정답·무응답 문항을 다시 풀어 보세요.' if weak else '이번 시험의 모든 문항을 해결했습니다. 검증된 사고변형으로 개념을 확장해 보세요.'))+'\n\n'
+        weak=data.get('weak_types',{})
+        source+='#text(weight:"bold")[보완할 유형]\n\n'
+        for label,positions in weak.items():source+=content_text(label+' · '+', '.join(map(str,positions))+'번 다시 풀기')+'\n\n'
+        if not weak:source+=content_text('채점 완료 후 보완할 유형을 확인하세요.' if data['pending'] else '이번 시험의 모든 문항을 해결했습니다.')+'\n\n'
+        if data.get('comment'):source+='#text(weight:"bold")[교사 코멘트]\n\n'+content_text(data['comment'])+'\n\n'
         source+='#text(size:8pt,fill:rgb("#747d90"))['+content_text('표본 1명. 정답률=만점 문항 수/출제 문항 수. 득점률=취득점수/만점(부분점수 포함). 미응시는 제외. 난이도는 문항별로 표시하며 자동 제안은 추정값입니다. 타 학교 예상점수는 비교 자료가 없어 산정하지 않습니다.')+']'
         return self.compile(source,'report')
 
